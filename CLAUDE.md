@@ -209,3 +209,16 @@ contextline/
 - Every agent should be independently runnable with a fixture — no agent should require the full pipeline to test.
 - Don't fake persistence or caching. If either isn't wired, the eval should fail, and that's the point.
 - Where the CLAUDE.md doesn't specify an implementation detail, that's usually intentional — decide based on what fits and note the decision in a code comment. If a decision has repo-wide implications (schema change, storage relocation, an agent boundary shift), reflect it back in this file so future sessions stay consistent.
+
+## Current status (2026-07-05)
+
+**Build steps 1–9 of 10 are complete, tested, and pushed** to https://github.com/aseemez/contextline
+(`main` clean). Pipeline runs end to end on real Vertex AI (Gemini 2.5 Flash), scores **5/5 on
+`eval.py`**, and serves over HTTP. Tests: **43 passed, 6 skipped**. Only **step 10 (real macOS
+capture script) remains** — it's optional/last by design; the project is complete without it.
+
+👉 **Read `PROGRESS.md` for the full handoff**: what's done per step, environment facts (Python 3.14,
+ADK 2.3.0, `GOOGLE_CLOUD_LOCATION=global`, ADC/no-keys, on-disk cache makes reruns free), decisions
+already made (don't re-open), decisions still open (chiefly: whether/how to do step 10 — the
+real-screen-capture path is **consent-gated**, the user rejected installing `mss`/`pyobjc` earlier),
+and run commands. Also flagged there: a plaintext `STRIPE_SECRET_KEY` in the user's `~/.zshrc`.
