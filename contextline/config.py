@@ -66,6 +66,15 @@ LITE_MODEL = "gemini-2.5-flash-lite"
 IMAGE_MAX_EDGE = 1024   # px on the long edge before sending to the model
 IMAGE_JPEG_QUALITY = 70
 
+# --- Capture batching (deterministic, no reasoning) ---
+# The Capture Agent chunks pending events into batches; each batch becomes exactly one
+# Analyst call (cost discipline: one call per session/window, never one per event).
+# A new batch starts on a long idle gap, or when a run gets too large/too long to send
+# comfortably in a single vision call.
+IDLE_GAP_SECONDS = 20 * 60        # gap this long ends a session
+MAX_BATCH_EVENTS = 12             # cap events per Analyst call
+MAX_BATCH_SPAN_SECONDS = 60 * 60  # cap wall-clock span per batch
+
 
 def vertex_configured() -> bool:
     """True when the Vertex routing env vars are present."""

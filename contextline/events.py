@@ -64,3 +64,35 @@ def load_events(folder: Path) -> list[CaptureEvent]:
     folder = Path(folder)
     events = [load_event(p) for p in folder.glob("*.json")]
     return sorted(events, key=lambda e: (e.timestamp, e.event_id))
+
+
+@dataclass(frozen=True)
+class EventBatch:
+    """A contiguous run of capture events handed to the Analyst as one unit.
+
+    One batch == one Analyst (vision) call. The Capture Agent produces these; the Analyst
+    turns each into labeled semantic blocks.
+    """
+
+    batch_id: str
+    events: tuple[CaptureEvent, ...]
+
+    @property
+    def start(self) -> datetime:
+        return self.events[0].dt
+
+    @property
+    def end(self) -> datetime:
+        return self.events[-1].dt
+
+    @property
+    def event_ids(self) -> list[str]:
+        return [e.event_id for e in self.events]
+
+    @property
+    def date(self) -> str:
+        """The calendar date (YYYY-MM-DD) this batch belongs to, from its first event."""
+        return self.events[0].dt.date().isoformat()
+
+    def __len__(self) -> int:
+        return len(self.events)
