@@ -98,8 +98,21 @@ class MemoryAgent:
             ],
         )
 
-    def answer(self, question: str, today: str | None = None) -> str:
-        """Answer a natural-language question about stored history."""
+    def answer(
+        self,
+        question: str,
+        today: str | None = None,
+        refinements: list[str] | None = None,
+    ) -> str:
+        """Answer a natural-language question about stored history.
+
+        ``refinements`` are the current session's user preferences; when present they're
+        threaded into the question so answers honor them (e.g. excluding an app).
+        """
         today = today or date_cls.today().isoformat()
         agent = self._make_query_agent(today)
-        return run_text_agent(agent, question).strip()
+        message = question
+        if refinements:
+            prefs = "\n".join(f"- {r}" for r in refinements)
+            message = f"{question}\n\n(Honor these active preferences in your answer:\n{prefs})"
+        return run_text_agent(agent, message).strip()
