@@ -212,13 +212,15 @@ contextline/
 
 ## Current status (2026-07-05)
 
-**Build steps 1–9 of 10 are complete, tested, and pushed** to https://github.com/aseemez/contextline
-(`main` clean). Pipeline runs end to end on real Vertex AI (Gemini 2.5 Flash), scores **5/5 on
-`eval.py`**, and serves over HTTP. Tests: **43 passed, 6 skipped**. Only **step 10 (real macOS
-capture script) remains** — it's optional/last by design; the project is complete without it.
+**All 10 build steps are complete and tested** (repo: https://github.com/aseemez/contextline).
+Pipeline runs end to end on real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, and
+serves over HTTP. Tests: **48 passed, 6 skipped**. Step 10 (real macOS capture) is built the
+**consent-safe way**: `real_capture.py` is complete and unit-tested, but its screen-reading deps
+(`mss`/`pyobjc`) are an opt-in extra and are **not installed** — importing the module is safe,
+only running it captures the screen, which stays the user's explicit choice.
 
 👉 **Read `PROGRESS.md` for the full handoff**: what's done per step, environment facts (Python 3.14,
 ADK 2.3.0, `GOOGLE_CLOUD_LOCATION=global`, ADC/no-keys, on-disk cache makes reruns free), decisions
-already made (don't re-open), decisions still open (chiefly: whether/how to do step 10 — the
-real-screen-capture path is **consent-gated**, the user rejected installing `mss`/`pyobjc` earlier),
-and run commands. Also flagged there: a plaintext `STRIPE_SECRET_KEY` in the user's `~/.zshrc`.
+already made (don't re-open), and run commands. Real-screen capture is **consent-gated** — do not
+run it for the user without an explicit ask. Also flagged there: a plaintext `STRIPE_SECRET_KEY`
+in the user's `~/.zshrc`.

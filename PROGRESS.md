@@ -6,13 +6,16 @@
 
 ## TL;DR
 
-Build steps **1–9 of 10 are complete, tested, and pushed**. The pipeline works end to end
-against real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, and serves over HTTP.
-Only **step 10 (the real macOS screen-capture script) remains**, and it's optional/last by
-design. Tests: **43 passed, 6 skipped** (skips are opt-in live-LLM tests + MCP-needs-npx).
+**All 10 build steps are complete and tested.** The pipeline works end to end against real
+Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, and serves over HTTP. Tests: **48
+passed, 6 skipped** (skips are opt-in live-LLM tests + MCP-needs-npx).
 
-Repo: https://github.com/aseemez/contextline — `main` is clean and fully pushed
-(latest commit `342ba88` "Build step 9: FastAPI wrapper").
+Step 10 (real macOS capture) was built the **consent-safe way**: the code is complete and
+unit-tested, but its screen-reading deps (`mss`/`pyobjc`) are an opt-in extra and are **not
+installed** — importing the module is safe, only running it captures the screen, which stays
+the user's explicit choice.
+
+Repo: https://github.com/aseemez/contextline.
 
 ## Environment (verified working — do not re-litigate)
 
@@ -40,11 +43,21 @@ Repo: https://github.com/aseemez/contextline — `main` is clean and fully pushe
 
 ## What's left
 
-### Build step 10 — real macOS capture script (`capture_script/real_capture.py`) — NOT STARTED
-- Poll frontmost app via `pyobjc`/`NSWorkspace` (~1s); on active-window/app change emit a
-  capture event (`mss` downscaled JPEG + JSON sidecar) into `pending/`; debounce sub-3s flicker.
-- Must write the **same on-disk shape** as the mock generator (so nothing downstream changes).
-- **Optional / last** per CLAUDE.md's build order. The project is complete and eval-passing without it.
+Nothing required. The build order is complete.
+
+### Build step 10 — real macOS capture script — DONE (consent-safe)
+- `capture_script/real_capture.py`: polls the frontmost app via `pyobjc`/`NSWorkspace` (~1s);
+  on a debounced active-window change emits a capture event (`mss` downscaled JPEG + JSON
+  sidecar) into `pending/`. Writes the **same on-disk shape** as the mock generator, so nothing
+  downstream changes. Debounce is a pure state machine (`advance()`), unit-tested with no screen.
+- **Deps are opt-in** (`pip install -e ".[capture]"`, added `pyobjc-framework-Quartz` for window
+  titles) and **not installed** — importing is safe, only `run()` captures. The user rejected the
+  install earlier, so real-screen capture stays consent-gated. `--dry-run` detects switches
+  without grabbing screenshots (needs `pyobjc` only, not `mss`).
+- Tests: `tests/test_real_capture.py` (5) cover debounce, event id/shape, on-disk write contract.
+
+Optional future polish (not required): actually running capture on the user's machine (their
+consent), a `blocks`-level DB migration test, or streaming responses in the API.
 
 ## Decisions already made (don't re-open these)
 
@@ -60,14 +73,10 @@ Repo: https://github.com/aseemez/contextline — `main` is clean and fully pushe
 
 ## Decisions still OPEN (need the user)
 
-1. **Do step 10 at all?** Three options presented to the user, not yet answered:
-   - (a) **Skip it** — project is complete/eval-passing without it; polish docs instead.
-   - (b) **Build but don't run** — write `real_capture.py` fully, but only smoke-test app-name
-     detection; never capture the user's real screen without them explicitly running it.
-   - (c) Something else.
-   - Context: the user **rejected** the `mss`/`pyobjc` dependency install earlier — reasonable, since
-     that's the only part that reads the real screen. Treat real-screen capture as **consent-gated**:
-     do not capture the actual screen without the user explicitly choosing to run the script.
+1. **Step 10 — RESOLVED as option (b).** Built `real_capture.py` fully + unit tests, but did
+   **not** install `mss`/`pyobjc` or capture the real screen. If the user later wants a live run:
+   `pip install -e ".[capture]"` then `--dry-run`/`--once`. Real-screen capture stays
+   consent-gated — do not run it for them without an explicit ask.
 
 ## Unrelated flags raised (outside the capstone)
 

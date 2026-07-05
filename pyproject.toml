@@ -16,7 +16,8 @@ dependencies = [
 # Real capture script only — macOS-specific, not needed for the mock pipeline.
 capture = [
     "mss>=9.0",
-    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",   # NSWorkspace (frontmost app)
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",  # CGWindowList (window title)
 ]
 dev = [
     "pytest>=8.0",
