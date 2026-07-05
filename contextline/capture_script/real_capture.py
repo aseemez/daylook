@@ -52,6 +52,13 @@ DEBOUNCE_SECONDS = 3.0      # a window must persist this long before it counts a
 # A window is identified by (app_name, window_title). A change in either is a context switch.
 WindowKey = tuple[str, str]
 
+# On-screen windows owned by these are system UI (menu bar, dock, overlays), not apps the user
+# works in. They can appear at layer 0, so we skip them when picking the frontmost app window.
+_SKIP_OWNERS = {
+    "Window Server", "Dock", "Control Center", "Notification Center", "Spotlight",
+    "Wallpaper", "WindowManager", "Screenshot", "Universal Control", "coreautha",
+}
+
 
 # --- Debounce state machine (pure, no OS calls — this is what the tests exercise) -----
 
@@ -132,21 +139,26 @@ def _load_backend(need_screenshots: bool = True) -> _Backend:
         CGWindowListCopyWindowInfo = None  # type: ignore
 
     def frontmost() -> WindowKey:
-        app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        app_name = app.localizedName() or "Unknown"
-        window_title = ""
+        # Source of truth is the window-server z-order (CGWindowList), queried fresh on every
+        # call. NSWorkspace.frontmostApplication() is deliberately NOT used as the primary signal:
+        # in a long-running headless script (no NSApplication run loop) it returns a STALE value —
+        # it kept reporting the launching terminal even as the user switched apps, so no switches
+        # were ever detected. The first on-screen layer-0 window belongs to the app actually in
+        # front, and that reflects Cmd-Tab / click-to-focus immediately.
         if CGWindowListCopyWindowInfo is not None:
-            pid = app.processIdentifier()
             windows = CGWindowListCopyWindowInfo(
                 kCGWindowListOptionOnScreenOnly, kCGNullWindowID
             ) or []
             for w in windows:
-                # layer 0 == normal app window; the frontmost such window owned by our app.
-                if w.get("kCGWindowOwnerPID") == pid and w.get("kCGWindowLayer", 1) == 0:
-                    window_title = w.get("kCGWindowName", "") or ""
-                    if window_title:
-                        break
-        return (app_name, window_title)
+                if w.get("kCGWindowLayer", 1) != 0:  # skip menubar/dock/control-center chrome
+                    continue
+                owner = (w.get("kCGWindowOwnerName") or "").strip()
+                if not owner or owner in _SKIP_OWNERS:
+                    continue
+                return (owner, w.get("kCGWindowName", "") or "")
+        # Fallback only if Quartz is somehow unavailable (may be stale, but better than nothing).
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        return (app.localizedName() or "Unknown", "")
 
     if not need_screenshots:
         # dry-run: detect switches without ever grabbing the screen.
@@ -213,11 +225,14 @@ def run(
     once: bool = False,
     dry_run: bool = False,
     max_events: int | None = None,
+    duration_seconds: float | None = None,
 ) -> int:
     """Poll the frontmost window and emit an event on each debounced context switch.
 
-    Blocks until Ctrl-C (or ``once``/``max_events`` is reached). Returns the number of events
-    written. ``dry_run`` prints switches without writing anything (and needs no ``mss``).
+    Runs until Ctrl-C, or until any of the optional stop conditions is reached: ``once`` (one
+    event), ``max_events`` (a count), or ``duration_seconds`` (a wall-clock limit — the "run it
+    for 5 minutes and stop" control). Returns the number of events written. ``dry_run`` prints
+    switches without writing anything (and needs no ``mss``).
     """
     config.ensure_dirs()
     pending = Path(pending) if pending is not None else config.pending_dir()
@@ -226,11 +241,18 @@ def run(
     backend = _load_backend(need_screenshots=not dry_run)
     state = DebounceState()
     written = 0
+    start = time.monotonic()
 
+    stop_note = "Ctrl-C to stop" if duration_seconds is None else (
+        f"auto-stops in {duration_seconds/60:.0f} min (or Ctrl-C)")
     print(f"[real_capture] watching frontmost window (poll={poll_seconds}s, "
-          f"debounce={debounce_seconds}s){'  [DRY RUN]' if dry_run else ''}. Ctrl-C to stop.")
+          f"debounce={debounce_seconds}s){'  [DRY RUN]' if dry_run else ''}. {stop_note}.")
     try:
         while True:
+            if duration_seconds is not None and time.monotonic() - start >= duration_seconds:
+                print(f"\n[real_capture] reached {duration_seconds/60:.0f}-min limit. "
+                      f"Wrote {written} event(s) to {pending}.")
+                break
             key = backend.frontmost()
             state, emit = advance(state, key, time.monotonic(), debounce_seconds)
             if emit:
@@ -260,6 +282,9 @@ def main() -> None:
     )
     parser.add_argument("--once", action="store_true",
                         help="emit a single event and exit (smoke test)")
+    parser.add_argument("--minutes", type=float, default=None,
+                        help="optional: auto-stop after N minutes. Omit to run until you press "
+                             "Ctrl-C (you decide when to stop).")
     parser.add_argument("--dry-run", action="store_true",
                         help="print detected switches but write nothing (no mss screenshot)")
     parser.add_argument("--poll", type=float, default=POLL_SECONDS, help="poll interval seconds")
@@ -275,6 +300,7 @@ def main() -> None:
         debounce_seconds=args.debounce,
         once=args.once,
         dry_run=args.dry_run,
+        duration_seconds=(args.minutes * 60) if args.minutes else None,
     )
 
 
