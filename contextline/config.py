@@ -75,6 +75,10 @@ IDLE_GAP_SECONDS = 20 * 60        # gap this long ends a session
 MAX_BATCH_EVENTS = 12             # cap events per Analyst call
 MAX_BATCH_SPAN_SECONDS = 60 * 60  # cap wall-clock span per batch
 
+# An event's "dwell" (time attributed to it) is the gap to the next event, capped here so a
+# long idle gap or the final event of the day can't inflate a block's duration.
+MAX_EVENT_DWELL_SECONDS = 15 * 60
+
 
 def vertex_configured() -> bool:
     """True when the Vertex routing env vars are present."""
