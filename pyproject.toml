@@ -1,0 +1,33 @@
+[project]
+name = "contextline"
+version = "0.1.0"
+description = "A local work-journal that turns raw screen activity into a semantic daily timeline."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-adk",
+    "python-dotenv>=1.0",
+    "Pillow>=10.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.optional-dependencies]
+# Real capture script only — macOS-specific, not needed for the mock pipeline.
+capture = [
+    "mss>=9.0",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["contextline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
