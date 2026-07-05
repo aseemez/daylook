@@ -151,13 +151,17 @@ class RootAgent:
         session_id = session_id or uuid.uuid4().hex
         await self._ensure_session(session_id)
 
+        from contextline.observability import observe
+
         content = types.Content(role="user", parts=[types.Part(text=message)])
         reply = ""
-        async for ev in self._runner.run_async(
-            user_id=USER_ID, session_id=session_id, new_message=content
-        ):
-            if ev.is_final_response() and ev.content and ev.content.parts:
-                reply = ev.content.parts[0].text or reply
+        with observe("root", "chat", message[:80], session_id=session_id) as rec:
+            async for ev in self._runner.run_async(
+                user_id=USER_ID, session_id=session_id, new_message=content
+            ):
+                if ev.is_final_response() and ev.content and ev.content.parts:
+                    reply = ev.content.parts[0].text or reply
+            rec["output"] = f"{len(reply)} chars"
         return reply, session_id
 
     async def get_refinements(self, session_id: str) -> list[str]:

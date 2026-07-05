@@ -109,10 +109,15 @@ class MemoryAgent:
         ``refinements`` are the current session's user preferences; when present they're
         threaded into the question so answers honor them (e.g. excluding an app).
         """
+        from contextline.observability import observe
+
         today = today or date_cls.today().isoformat()
         agent = self._make_query_agent(today)
         message = question
         if refinements:
             prefs = "\n".join(f"- {r}" for r in refinements)
             message = f"{question}\n\n(Honor these active preferences in your answer:\n{prefs})"
-        return run_text_agent(agent, message).strip()
+        with observe("memory", "answer", question[:80]) as rec:
+            answer = run_text_agent(agent, message).strip()
+            rec["output"] = f"{len(answer)} chars"
+        return answer

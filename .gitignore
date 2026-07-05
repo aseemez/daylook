@@ -29,3 +29,6 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Eval harness local state (cache + db + captures)
+.eval_home/

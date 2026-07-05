@@ -14,6 +14,7 @@ from contextline.agents.analyst import aggregate_day, analyze_batches
 from contextline.agents.capture import CaptureAgent
 from contextline.agents.journalist import write_journal
 from contextline.agents.memory import MemoryAgent
+from contextline.observability import observe
 
 
 class Pipeline:
@@ -41,7 +42,10 @@ class Pipeline:
         set False to keep a fixture reusable across runs (e.g. in eval).
         """
         capture = CaptureAgent(pending=pending_dir)
-        batches = capture.batch_pending()
+        with observe("capture", "batch_pending") as rec:
+            batches = capture.batch_pending()
+            rec["input"] = f"{sum(len(b) for b in batches)} events"
+            rec["output"] = f"{len(batches)} batches"
         if not batches:
             return {
                 "date": None,
@@ -51,10 +55,20 @@ class Pipeline:
                 "num_events": 0,
             }
 
-        analyses = self._analyze(batches, pending_dir=capture.pending, use_cache=use_cache)
+        with observe("analyst", "analyze_batches", f"{len(batches)} batches") as rec:
+            analyses = self._analyze(batches, pending_dir=capture.pending, use_cache=use_cache)
+            rec["output"] = f"{sum(len(a.blocks) for a in analyses)} blocks"
+
         day = aggregate_day(analyses)
-        writeup = self._journal(day, refinements=refinements, use_cache=use_cache)
-        date = self.memory.persist_day(day, writeup)
+
+        with observe("journalist", "write_journal", f"{len(day['blocks'])} blocks") as rec:
+            writeup = self._journal(day, refinements=refinements, use_cache=use_cache)
+            rec["output"] = f"{len(writeup)} chars"
+            rec["refinements"] = list(refinements or [])
+
+        with observe("memory", "persist_day", day.get("date") or "?") as rec:
+            date = self.memory.persist_day(day, writeup)
+            rec["output"] = f"persisted {date}"
 
         if move_processed:
             for b in batches:
