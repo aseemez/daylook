@@ -1,0 +1,182 @@
+[
+  {
+    "event_id": "evt_0001",
+    "timestamp": "2026-07-05T09:02:00",
+    "app_name": "Slack",
+    "window_title": "general \u2014 Acme Corp"
+  },
+  {
+    "event_id": "evt_0002",
+    "timestamp": "2026-07-05T09:06:00",
+    "app_name": "Slack",
+    "window_title": "#eng-oncall \u2014 Acme Corp"
+  },
+  {
+    "event_id": "evt_0003",
+    "timestamp": "2026-07-05T09:09:00",
+    "app_name": "Google Chrome",
+    "window_title": "Inbox (3) - Gmail"
+  },
+  {
+    "event_id": "evt_0004",
+    "timestamp": "2026-07-05T09:12:30",
+    "app_name": "Google Chrome",
+    "window_title": "ACME-1423: Auth tokens expiring early \u00b7 Jira"
+  },
+  {
+    "event_id": "evt_0005",
+    "timestamp": "2026-07-05T09:15:10",
+    "app_name": "Cursor",
+    "window_title": "auth.py \u2014 acme-api"
+  },
+  {
+    "event_id": "evt_0006",
+    "timestamp": "2026-07-05T09:25:10",
+    "app_name": "Cursor",
+    "window_title": "jwt_utils.py \u2014 acme-api"
+  },
+  {
+    "event_id": "evt_0007",
+    "timestamp": "2026-07-05T09:34:10",
+    "app_name": "Terminal",
+    "window_title": "pytest tests/test_auth.py"
+  },
+  {
+    "event_id": "evt_0008",
+    "timestamp": "2026-07-05T09:35:40",
+    "app_name": "Cursor",
+    "window_title": "jwt_utils.py \u2014 acme-api"
+  },
+  {
+    "event_id": "evt_0009",
+    "timestamp": "2026-07-05T09:43:40",
+    "app_name": "Google Chrome",
+    "window_title": "Key rotation for JWT \u2014 Stack Overflow"
+  },
+  {
+    "event_id": "evt_0010",
+    "timestamp": "2026-07-05T09:47:00",
+    "app_name": "Google Chrome",
+    "window_title": "JSON Web Key Set - MDN"
+  },
+  {
+    "event_id": "evt_0011",
+    "timestamp": "2026-07-05T09:50:00",
+    "app_name": "Cursor",
+    "window_title": "jwt_utils.py \u2014 acme-api"
+  },
+  {
+    "event_id": "evt_0012",
+    "timestamp": "2026-07-05T09:58:40",
+    "app_name": "Terminal",
+    "window_title": "pytest tests/test_auth.py"
+  },
+  {
+    "event_id": "evt_0013",
+    "timestamp": "2026-07-05T09:59:50",
+    "app_name": "Terminal",
+    "window_title": "git commit -m 'fix jwt rotation overlap'"
+  },
+  {
+    "event_id": "evt_0014",
+    "timestamp": "2026-07-05T10:00:50",
+    "app_name": "Google Chrome",
+    "window_title": "Pull Request #212 \u00b7 acme/acme-api \u00b7 GitHub"
+  },
+  {
+    "event_id": "evt_0015",
+    "timestamp": "2026-07-05T10:03:20",
+    "app_name": "Slack",
+    "window_title": "#eng-oncall \u2014 Acme Corp"
+  },
+  {
+    "event_id": "evt_0016",
+    "timestamp": "2026-07-05T10:05:20",
+    "app_name": "Spotify",
+    "window_title": "Deep Focus \u2014 Playlist"
+  },
+  {
+    "event_id": "evt_0017",
+    "timestamp": "2026-07-05T10:05:50",
+    "app_name": "Google Chrome",
+    "window_title": "Pull Request #205: Rate limiter \u00b7 GitHub"
+  },
+  {
+    "event_id": "evt_0018",
+    "timestamp": "2026-07-05T10:10:50",
+    "app_name": "Google Chrome",
+    "window_title": "Files changed \u00b7 PR #205 \u00b7 GitHub"
+  },
+  {
+    "event_id": "evt_0019",
+    "timestamp": "2026-07-05T10:15:10",
+    "app_name": "Cursor",
+    "window_title": "middleware/ratelimit.py \u2014 acme-api"
+  },
+  {
+    "event_id": "evt_0020",
+    "timestamp": "2026-07-05T10:18:50",
+    "app_name": "Google Chrome",
+    "window_title": "Pull Request #205: Rate limiter \u00b7 GitHub"
+  },
+  {
+    "event_id": "evt_0021",
+    "timestamp": "2026-07-05T10:20:20",
+    "app_name": "Notion",
+    "window_title": "Sprint 24 \u2014 Engineering Notes"
+  },
+  {
+    "event_id": "evt_0022",
+    "timestamp": "2026-07-05T10:23:20",
+    "app_name": "Google Chrome",
+    "window_title": "Vertex AI Gemini docs \u2014 Google Cloud"
+  },
+  {
+    "event_id": "evt_0023",
+    "timestamp": "2026-07-05T10:27:20",
+    "app_name": "Cursor",
+    "window_title": "analyst.py \u2014 contextline"
+  },
+  {
+    "event_id": "evt_0024",
+    "timestamp": "2026-07-05T10:35:20",
+    "app_name": "Cursor",
+    "window_title": "mock_generator.py \u2014 contextline"
+  },
+  {
+    "event_id": "evt_0025",
+    "timestamp": "2026-07-05T10:42:20",
+    "app_name": "Terminal",
+    "window_title": "python -m contextline.capture_script.mock_generator"
+  },
+  {
+    "event_id": "evt_0026",
+    "timestamp": "2026-07-05T10:43:20",
+    "app_name": "Slack",
+    "window_title": "general \u2014 Acme Corp"
+  },
+  {
+    "event_id": "evt_0027",
+    "timestamp": "2026-07-05T10:45:20",
+    "app_name": "Google Chrome",
+    "window_title": "The Verge \u2014 Tech News"
+  },
+  {
+    "event_id": "evt_0028",
+    "timestamp": "2026-07-05T10:50:20",
+    "app_name": "Spotify",
+    "window_title": "Lo-Fi Beats \u2014 Playlist"
+  },
+  {
+    "event_id": "evt_0029",
+    "timestamp": "2026-07-05T10:50:45",
+    "app_name": "Cursor",
+    "window_title": "journalist.py \u2014 contextline"
+  },
+  {
+    "event_id": "evt_0030",
+    "timestamp": "2026-07-05T10:56:45",
+    "app_name": "Google Chrome",
+    "window_title": "Calendar - Week of Jul 6 \u00b7 Google"
+  }
+]
