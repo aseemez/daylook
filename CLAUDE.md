@@ -210,17 +210,23 @@ contextline/
 - Don't fake persistence or caching. If either isn't wired, the eval should fail, and that's the point.
 - Where the CLAUDE.md doesn't specify an implementation detail, that's usually intentional — decide based on what fits and note the decision in a code comment. If a decision has repo-wide implications (schema change, storage relocation, an agent boundary shift), reflect it back in this file so future sessions stay consistent.
 
-## Current status (2026-07-05)
+## Current status (2026-07-05, evening)
 
-**All 10 build steps are complete and tested** (repo: https://github.com/aseemez/contextline).
-Pipeline runs end to end on real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, and
-serves over HTTP. Tests: **48 passed, 6 skipped**. Step 10 (real macOS capture) is built the
-**consent-safe way**: `real_capture.py` is complete and unit-tested, but its screen-reading deps
-(`mss`/`pyobjc`) are an opt-in extra and are **not installed** — importing the module is safe,
-only running it captures the screen, which stays the user's explicit choice.
+**All 10 build steps are complete, and real screen capture is proven LIVE on the user's Mac**
+(repo: https://github.com/aseemez/contextline, `main` clean and pushed — latest `c365295`).
+Pipeline runs end to end on real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, serves
+over HTTP, and ingests **real screenshots of the user's actual screen**. Tests: **48 passed, 6
+skipped**. The capstone is **presentation-ready** (user is demoing to judges).
 
-👉 **Read `PROGRESS.md` for the full handoff**: what's done per step, environment facts (Python 3.14,
-ADK 2.3.0, `GOOGLE_CLOUD_LOCATION=global`, ADC/no-keys, on-disk cache makes reruns free), decisions
-already made (don't re-open), and run commands. Real-screen capture is **consent-gated** — do not
-run it for the user without an explicit ask. Also flagged there: a plaintext `STRIPE_SECRET_KEY`
-in the user's `~/.zshrc`.
+Step 10 (`real_capture.py`) is done, its deps (`mss`/`pyobjc`) are **installed**, and it was
+live-tested. A capture bug was found and fixed: frontmost-app detection now reads the
+**CGWindowList z-order** (fresh each poll) instead of the *stale* `NSWorkspace.frontmostApplication()`
+— the old code reported the launching Terminal no matter which app the user switched to. Added
+`--minutes N` (optional auto-stop). Known limitation worth mentioning: split-screen attributes both
+apps' time to the focused one (capture is active-app-driven) — use separate full windows + Cmd-Tab.
+
+👉 **Read `PROGRESS.md` for the full handoff**: per-step state, environment facts (Python 3.14,
+ADK 2.3.0, `GOOGLE_CLOUD_LOCATION=global`, ADC/no-keys, on-disk cache makes reruns free), the
+demo recipe, decisions already made (don't re-open), and run commands. Real-screen capture stays
+**consent-gated** — the user opted in for the demo, but don't capture their screen in a new session
+without an explicit ask. Also flagged there: a plaintext `STRIPE_SECRET_KEY` in the user's `~/.zshrc`.
