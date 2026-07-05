@@ -1,0 +1,30 @@
+{
+  "writeup": "# Work journal — 2026-07-05\n\nYou spent the morning debugging a JWT rotation bug and reviewing a teammate's PR.\n\n## Timeline\n- 09:15–09:43 — Debugging JWT token rotation in Cursor (Cursor, 28m)\n- 10:05–10:20 — Reviewing rate-limiter PR (Google Chrome, 14m)",
+  "day": {
+    "date": "2026-07-05",
+    "total_tracked_seconds": 2520,
+    "time_by_category": {"coding": 1680, "review": 840},
+    "time_by_app": {"Cursor": 1680, "Google Chrome": 840},
+    "app_ranking": ["Cursor", "Google Chrome"],
+    "blocks": [
+      {
+        "start": "2026-07-05T09:15:00",
+        "end": "2026-07-05T09:43:00",
+        "duration_seconds": 1680,
+        "label": "Debugging JWT token rotation in Cursor",
+        "category": "coding",
+        "app_name": "Cursor",
+        "source_event_ids": ["evt_0005", "evt_0006", "evt_0007", "evt_0008"]
+      },
+      {
+        "start": "2026-07-05T10:05:00",
+        "end": "2026-07-05T10:20:00",
+        "duration_seconds": 840,
+        "label": "Reviewing teammate's rate-limiter PR",
+        "category": "review",
+        "app_name": "Google Chrome",
+        "source_event_ids": ["evt_0017", "evt_0018", "evt_0019", "evt_0020"]
+      }
+    ]
+  }
+}
