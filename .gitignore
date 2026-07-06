@@ -32,3 +32,6 @@ env/
 
 # Eval harness local state (cache + db + captures)
 .eval_home/
+
+# ADK dev-UI (`adk web`) runtime state (per-session SQLite, etc.)
+.adk/
