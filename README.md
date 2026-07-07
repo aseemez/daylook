@@ -2,55 +2,63 @@
 
 A local work-journal that turns raw screen activity into a semantic daily timeline.
 
+When you spend all day at a computer, the hours blur together and it is hard to remember what you
+actually worked on. Contextline watches your screen activity and reconstructs your day as
+readable activities, so you can look back, understand your habits, and plan a better tomorrow.
+
 Instead of "Cursor: 3h, Chrome: 1h", the output looks like:
 
 - 09:15–10:00 — Debugging auth flow in Cursor
 - 10:00–10:20 — Research on JWT rotation (Chrome, MDN + Stack Overflow)
 - 10:20–11:30 — PR review in GitHub
 
-Capture is **event-driven** (a new event fires when the active window/app changes, not on a
-fixed clock), runs entirely locally, persists to a local store, and exposes a small HTTP API.
-You talk to it through a chat interface — asking about the current day, past days, or refining
-how activity is bucketed.
+Capture is **event-driven**: a new event fires when the active window or app changes, not on a
+fixed clock. It runs entirely on your machine, stores everything locally, and exposes a small HTTP
+API. You talk to it through a chat interface, asking about the current day, past days, or how you
+want activity grouped.
 
 ## Status
 
 **Complete and running.** The full pipeline works end to end against real Vertex AI
 (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, and serves over HTTP. Test suite: **48 passed,
-6 skipped** (skips are opt-in live-LLM tests + an MCP-needs-npx case).
+6 skipped** (the skips are opt-in live-model tests plus one MCP case that needs `npx`).
 
 All ten build steps from [`CLAUDE.md`](./CLAUDE.md) are implemented, including the real macOS
-capture script — see [Real screen capture](#real-screen-capture-macos) for the consent note.
-See [`PROGRESS.md`](./PROGRESS.md) for the detailed per-step handoff.
+capture script. See [Real screen capture](#real-screen-capture-macos) for the consent note, and
+[`PROGRESS.md`](./PROGRESS.md) for the detailed per-step handoff.
 
-## Architecture
+## How it works
 
-Two strictly separated layers:
+Contextline has two layers, kept strictly separate.
 
-- **Capture layer (dumb)** — emits a capture event (screenshot + JSON sidecar) on every
-  active-window change. No reasoning. A [mock generator](contextline/capture_script/mock_generator.py)
-  stands in during development; [`real_capture.py`](contextline/capture_script/real_capture.py)
-  is the live macOS version.
-- **Agent layer (Google ADK)** — a hierarchy orchestrated by a Root Agent:
+**The capture layer is deliberately simple.** It records what is on screen and nothing more. On
+every active-window change it writes a capture event: a screenshot plus a small JSON file with the
+app name, window title, and timestamp. A [mock generator](contextline/capture_script/mock_generator.py)
+stands in during development, and [`real_capture.py`](contextline/capture_script/real_capture.py)
+is the live macOS version. Both write the same files, so nothing downstream cares which one ran.
 
-  ```
-  pending/ → Capture Agent  (read + batch + move to processed/, via MCP filesystem tool)
-           → Analyst Agent   (vision: group + label into semantic blocks)
-           → Journalist Agent (readable daily writeup)
-           → Memory Agent     (persist to SQLite; answer historical queries)
-           → Root Agent       (routes user queries, holds per-session refinements)
-  ```
+**The agent layer does all the thinking**, built on Google ADK as a hierarchy of five agents that
+a Root Agent coordinates:
 
-Key design decisions (see `CLAUDE.md` / `PROGRESS.md` for the full list):
+```
+pending/ → Capture Agent   (read + batch events, move to processed/, via an MCP filesystem tool)
+         → Analyst Agent    (vision: group events and label them into semantic blocks)
+         → Journalist Agent (turn the blocks into a readable daily writeup)
+         → Memory Agent      (save each day to SQLite, answer questions about past days)
+         → Root Agent        (the chat you talk to; holds per-session preferences)
+```
 
-- **Anti-hallucination is structural, not prompt-based.** The Analyst LLM only *groups and
-  labels*; every fact (times, durations, app names, `source_event_ids`) is derived in code from
-  the real events, so a block can always be traced back to captured data.
-- **On-disk response cache** keyed on the exact input batch — the first run costs, every rerun
-  of the same fixture is free. Critical for iterating on the pipeline and eval without burning
-  API credits.
-- **Session refinements** ("exclude Slack from focus time") live in ADK session state, are
-  threaded into downstream prompts for that chat only, and never touch SQLite.
+Three design decisions are worth calling out (the full list is in `CLAUDE.md` and `PROGRESS.md`):
+
+- **Nothing is hallucinated, by construction.** The Analyst model only groups events and labels
+  them. Every hard fact (times, durations, app names, source event IDs) is computed in code from
+  the real events, so every block can be traced back to activity that was actually captured.
+- **Reruns are free.** An on-disk cache stores each model call keyed on its exact input. The first
+  run costs money; every rerun on the same data is served from disk. This is what makes iterating
+  on the pipeline and the eval affordable.
+- **Conversational preferences stay conversational.** Refinements like "don't count Slack as focus
+  time" live in ADK session state and are threaded into later prompts for that chat only. They
+  never touch the database.
 
 ## Stack
 
@@ -72,7 +80,8 @@ pip install -e ".[dev]"
 ```
 
 `.env` carries only Vertex routing (`GOOGLE_GENAI_USE_VERTEXAI=TRUE`, `GOOGLE_CLOUD_PROJECT`,
-`GOOGLE_CLOUD_LOCATION=global`). Real credentials come from ADC — **no API keys in code or env.**
+`GOOGLE_CLOUD_LOCATION=global`). Real credentials come from ADC, so there are **no API keys in code
+or env.**
 
 ## Running it
 
@@ -92,17 +101,17 @@ uvicorn contextline.api.main:app --reload
 ```
 
 `POST /chat` takes `{"message": str, "session_id": str | null}` and returns
-`{"reply": str, "session_id": str}`. `GET /health` returns a small status payload. Local-only,
-no auth — dev only.
+`{"reply": str, "session_id": str}`. `GET /health` returns a small status payload. It is local-only
+with no auth, which is fine for a personal dev tool.
 
 ## Real screen capture (macOS)
 
-`contextline/capture_script/real_capture.py` is the live, event-driven capture layer: it polls
-the frontmost app (~1s) via `pyobjc`/`NSWorkspace`, and on a debounced window change grabs a
-downscaled screenshot (`mss`) plus a JSON sidecar into `pending/` — the *same on-disk shape* as
-the mock generator, so the rest of the pipeline is unchanged.
+`contextline/capture_script/real_capture.py` is the live, event-driven capture layer. It polls the
+frontmost app about once a second via `pyobjc`/`NSWorkspace`, and on a debounced window change it
+grabs a downscaled screenshot (`mss`) plus a JSON sidecar into `pending/`. These are the same files
+the mock generator writes, so the rest of the pipeline is unchanged.
 
-**Running it captures your real screen**, so its dependencies are an opt-in extra and are not
+**Running it captures your real screen,** so its dependencies are an opt-in extra and are not
 installed by default. Importing the module is always safe; only invoking it starts capturing.
 
 ```bash
@@ -112,5 +121,5 @@ python -m contextline.capture_script.real_capture --once      # emit a single ev
 python -m contextline.capture_script.real_capture             # capture until Ctrl-C
 ```
 
-Window *titles* additionally require macOS Screen Recording permission; without it capture
-still works at the app level (empty title).
+Window *titles* additionally require macOS Screen Recording permission. Without it, capture still
+works at the app level with an empty title.
