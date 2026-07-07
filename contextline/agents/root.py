@@ -140,8 +140,10 @@ class RootAgent:
             "'begin capture', 'record my screen'), call start_capture. This starts REAL screen "
             "recording, so only do it on a clear request; pass minutes if they name a duration. "
             "Tell them capture has started.\n"
-            "- If they ask to STOP tracking/capturing, call stop_capture; if they then want a "
-            "summary of what was captured, also call process_today.\n"
+            "- If they ask to STOP tracking/capturing, call stop_capture and simply confirm that "
+            "capture has stopped. Do NOT build, process, or summarize the day here — never call "
+            "process_today off the back of a stop request. Wait until the user explicitly asks "
+            "for their day (e.g. 'what did I do today'), then process_today runs on its own.\n"
             "Be concise and friendly. Never invent activity or numbers."
         )
 
