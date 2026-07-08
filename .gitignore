@@ -44,3 +44,6 @@ relay/tokens.txt
 
 # ADK dev-UI (`adk web`) runtime state (per-session SQLite, etc.)
 .adk/
+
+# Launcher first-run verification scratch home
+.launch_test_home/

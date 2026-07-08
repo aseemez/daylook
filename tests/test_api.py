@@ -38,6 +38,40 @@ def test_health(tmp_path, monkeypatch):
     assert body["pending_events"] in (0, None)
 
 
+def test_setup_reports_unconfigured_then_configured(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    for var in ("GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_GENAI_USE_VERTEXAI"):
+        monkeypatch.delenv(var, raising=False)
+    client = TestClient(app)
+
+    r = client.get("/setup")
+    assert r.status_code == 200
+    assert r.json()["configured"] is False
+
+    r = client.post("/setup", json={"invite_token": "cl_demo", "relay_url": "https://relay.test"})
+    assert r.status_code == 200
+    assert r.json()["configured"] is True
+
+    # persisted, and applied to the live process so the next /chat is routed
+    assert client.get("/setup").json()["configured"] is True
+    assert os.environ["GOOGLE_API_KEY"] == "cl_demo"
+    assert os.environ["GOOGLE_GEMINI_BASE_URL"] == "https://relay.test"
+
+
+def test_setup_requires_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    client = TestClient(app)
+    r = client.post("/setup", json={})
+    assert r.status_code == 422  # invite_token is required
+
+
+def test_launcher_smoke(tmp_path, monkeypatch):
+    """The build gate: --smoke boots the real server and confirms /health, returns 0."""
+    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))  # never touch the real home
+    from contextline import launcher
+    assert launcher.main(["--smoke", "--no-browser"]) == 0
+
+
 def test_chat_creates_and_reuses_session():
     app.dependency_overrides[get_root] = lambda: _FakeRoot()
     try:

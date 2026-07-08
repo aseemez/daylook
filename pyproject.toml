@@ -12,6 +12,11 @@ dependencies = [
     "uvicorn[standard]>=0.29",
 ]
 
+[project.scripts]
+# `contextline` launches the local app (server + browser). Same entry point the
+# packaged .app runs via packaging/entry.py.
+contextline = "contextline.launcher:main"
+
 [project.optional-dependencies]
 # Real capture script only — macOS-specific, not needed for the mock pipeline.
 capture = [
