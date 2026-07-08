@@ -13,12 +13,19 @@ Run locally:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from contextline import config
 from contextline.agents.capture import CaptureAgent
 from contextline.agents.root import RootAgent
+
+# Resolved relative to this module so it works both from a normal install and
+# from a frozen (PyInstaller) bundle, where package data sits next to the .pyc.
+_STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Contextline", version="0.1.0")
 
@@ -41,6 +48,12 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """Serve the chat page (single self-contained HTML file, no CDN)."""
+    return FileResponse(_STATIC_DIR / "index.html", media_type="text/html")
 
 
 @app.post("/chat", response_model=ChatResponse)

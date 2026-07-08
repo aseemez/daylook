@@ -1,0 +1,200 @@
+<!doctype html>
+<!--
+  Contextline chat UI — a single self-contained file on purpose:
+  no CDN, no build step, works offline, and PyInstaller can ship it
+  as plain package data. Talks to the same-origin FastAPI endpoints:
+    GET  /health  -> status footer
+    GET  /setup   -> is a model key configured? (may not exist in dev)
+    POST /setup   -> save invite code
+    POST /chat    -> {"message", "session_id"} -> {"reply", "session_id"}
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contextline</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --panel: #ffffff; --ink: #1c1b19; --muted: #8a877f;
+    --accent: #4a6b52; --accent-ink: #ffffff; --line: #e4e2dc; --user-bubble: #e8efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #191817; --panel: #211f1e; --ink: #ece9e2; --muted: #8f8b82;
+      --accent: #6f9a78; --accent-ink: #10130f; --line: #33302d; --user-bubble: #2a332c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; height: 100dvh;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+  header span { color: var(--muted); font-size: 13px; }
+  #log { flex: 1; overflow-y: auto; padding: 20px; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  .msg { margin: 0 0 14px; white-space: pre-wrap; overflow-wrap: break-word; }
+  .msg.user {
+    background: var(--user-bubble); border-radius: 12px; padding: 10px 14px;
+    margin-left: 15%; width: fit-content; max-width: 85%; margin-left: auto;
+  }
+  .msg.bot { padding: 2px 0; }
+  .msg.err { color: #b3564f; }
+  .hint { color: var(--muted); font-size: 13px; }
+  #thinking { display: none; color: var(--muted); font-size: 13px; padding: 2px 0 14px; }
+  #thinking.on { display: block; }
+  form {
+    display: flex; gap: 10px; padding: 14px 20px 18px; border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  form .wrap { display: flex; gap: 10px; flex: 1; }
+  input[type=text] {
+    flex: 1; padding: 11px 14px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); color: var(--ink); font: inherit; outline: none;
+  }
+  input[type=text]:focus { border-color: var(--accent); }
+  button {
+    padding: 11px 18px; border: 0; border-radius: 10px; background: var(--accent);
+    color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  footer { padding: 6px 20px 10px; background: var(--panel); }
+  footer .wrap { color: var(--muted); font-size: 12px; }
+  /* First-run card: shown only when the server says no model key is set. */
+  #setup {
+    display: none; margin: 24px auto; max-width: 480px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; padding: 22px;
+  }
+  #setup.on { display: block; }
+  #setup h2 { margin: 0 0 6px; font-size: 16px; }
+  #setup p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+  #setup .row { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Contextline</h1>
+  <span>your day, in plain words</span>
+</header>
+
+<div id="log">
+  <div class="wrap">
+    <div id="setup">
+      <h2>Welcome — one thing first</h2>
+      <p>Paste the invite code you were given. It connects the app to its AI. Stored only on this Mac.</p>
+      <div class="row">
+        <input type="text" id="invite" placeholder="cl_..." autocomplete="off">
+        <button id="save-invite" type="button">Save</button>
+      </div>
+    </div>
+    <div id="messages">
+      <div class="msg bot hint">Try: “start tracking my screen”, then later “what did I do today?”</div>
+    </div>
+    <div id="thinking">thinking…</div>
+  </div>
+</div>
+
+<form id="composer">
+  <div class="wrap">
+    <input type="text" id="box" placeholder="Ask about your day…" autocomplete="off" autofocus>
+    <button id="send" type="submit">Send</button>
+  </div>
+</form>
+<footer><div class="wrap" id="status">connecting…</div></footer>
+
+<script>
+  // One chat session per page load; the server hands back a session_id on the
+  // first reply and reusing it keeps refinements ("ignore Slack") alive.
+  let sessionId = null;
+
+  const log = document.getElementById("log");
+  const messages = document.getElementById("messages");
+  const thinking = document.getElementById("thinking");
+  const box = document.getElementById("box");
+  const send = document.getElementById("send");
+
+  function add(kind, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    div.textContent = text;
+    messages.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  document.getElementById("composer").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = box.value.trim();
+    if (!text || send.disabled) return;
+    add("user", text);
+    box.value = "";
+    send.disabled = true;
+    thinking.classList.add("on");
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId }),
+      });
+      if (!res.ok) throw new Error("server said " + res.status);
+      const data = await res.json();
+      sessionId = data.session_id;
+      add("bot", data.reply);
+    } catch (err) {
+      add("err", "Something went wrong: " + err.message);
+    } finally {
+      send.disabled = false;
+      thinking.classList.remove("on");
+      box.focus();
+    }
+  });
+
+  // Status footer — best-effort, purely informational.
+  async function refreshHealth() {
+    try {
+      const res = await fetch("/health");
+      const h = await res.json();
+      const pending = h.pending_events == null ? "?" : h.pending_events;
+      document.getElementById("status").textContent =
+        `model: ${h.model} · pending events: ${pending}`;
+    } catch {
+      document.getElementById("status").textContent = "server unreachable";
+    }
+  }
+  refreshHealth();
+  setInterval(refreshHealth, 15000);
+
+  // First-run setup card. GET /setup may not exist on dev servers (older
+  // builds) — any error just keeps the card hidden.
+  async function checkSetup() {
+    try {
+      const res = await fetch("/setup");
+      if (!res.ok) return;
+      const s = await res.json();
+      if (!s.configured) document.getElementById("setup").classList.add("on");
+    } catch { /* dev server without /setup — fine */ }
+  }
+  document.getElementById("save-invite").addEventListener("click", async () => {
+    const token = document.getElementById("invite").value.trim();
+    if (!token) return;
+    const res = await fetch("/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invite_token: token }),
+    });
+    if (res.ok) {
+      document.getElementById("setup").classList.remove("on");
+      add("bot", "You're set. Ask me anything about your day.");
+      box.focus();
+    } else {
+      add("err", "That code didn't save — check it and try again.");
+    }
+  });
+  checkSetup();
+</script>
+</body>
+</html>

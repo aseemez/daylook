@@ -19,6 +19,14 @@ class _FakeRoot:
         return f"echo:{message}", (session_id or "new-session")
 
 
+def test_index_serves_chat_page():
+    client = TestClient(app)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Contextline" in r.text
+
+
 def test_health(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
     client = TestClient(app)
