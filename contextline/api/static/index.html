@@ -1,12 +1,18 @@
 <!doctype html>
 <!--
-  Contextline chat UI — a single self-contained file on purpose:
-  no CDN, no build step, works offline, and PyInstaller can ship it
-  as plain package data. Talks to the same-origin FastAPI endpoints:
-    GET  /health  -> status footer
-    GET  /setup   -> is a model key configured? (may not exist in dev)
+  Contextline chat UI — one self-contained file on purpose: no CDN, no build
+  step, works offline, and PyInstaller ships it as plain package data. Talks to
+  the same-origin FastAPI endpoints:
+    GET  /health  -> status pill (model, pending events)
+    GET  /setup   -> is an invite code configured? (may not exist on dev)
     POST /setup   -> save invite code
-    POST /chat    -> {"message", "session_id"} -> {"reply", "session_id"}
+    POST /chat    -> {"message","session_id"} -> {"reply","session_id"}
+
+  The assistant's daily writeup comes back as light markdown (a "# Work journal"
+  title, a narrative paragraph, a "## Timeline" list of "HH:MM–HH:MM — label
+  (app, Nm)" lines, and a "## By the numbers" stat list). renderReply() below
+  turns that into a real visual timeline instead of a wall of text; anything
+  that isn't a writeup (e.g. "started tracking") falls back to plain prose.
 -->
 <html lang="en">
 <head>
@@ -15,185 +21,536 @@
 <title>Contextline</title>
 <style>
   :root {
-    --bg: #f7f6f3; --panel: #ffffff; --ink: #1c1b19; --muted: #8a877f;
-    --accent: #4a6b52; --accent-ink: #ffffff; --line: #e4e2dc; --user-bubble: #e8efe9;
+    --bg: #f6f5f1; --surface: #ffffff; --surface-2: #fbfaf7;
+    --ink: #23221f; --ink-2: #56534c; --muted: #928e85;
+    --line: #e7e4dd; --line-2: #efece5;
+    --accent: #3f6b4d; --accent-2: #57906a; --accent-soft: #e9f0ea;
+    --user-bubble: #edf3ee; --danger: #b3564f; --amber: #c08a2d;
+    --shadow: 0 1px 2px rgba(30,28,24,.04), 0 8px 24px rgba(30,28,24,.06);
+    --radius: 16px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #191817; --panel: #211f1e; --ink: #ece9e2; --muted: #8f8b82;
-      --accent: #6f9a78; --accent-ink: #10130f; --line: #33302d; --user-bubble: #2a332c;
+      --bg: #161513; --surface: #201e1c; --surface-2: #262320;
+      --ink: #ece9e2; --ink-2: #bcb8af; --muted: #8b877e;
+      --line: #322f2b; --line-2: #2a2724;
+      --accent: #6f9a78; --accent-2: #8ab894; --accent-soft: #232c25;
+      --user-bubble: #2a332c; --danger: #d98a83; --amber: #d6a94f;
+      --shadow: 0 1px 2px rgba(0,0,0,.2), 0 10px 30px rgba(0,0,0,.35);
     }
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    display: flex; flex-direction: column; height: 100dvh;
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
   }
+  ::selection { background: var(--accent-soft); }
+
+  /* ---------- Header ---------- */
   header {
-    padding: 14px 20px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: baseline; gap: 10px;
+    flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+    padding: 12px 22px; border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter: saturate(1.2) blur(8px);
   }
-  header h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
-  header span { color: var(--muted); font-size: 13px; }
-  #log { flex: 1; overflow-y: auto; padding: 20px; }
-  .wrap { max-width: 720px; margin: 0 auto; }
-  .msg { margin: 0 0 14px; white-space: pre-wrap; overflow-wrap: break-word; }
-  .msg.user {
-    background: var(--user-bubble); border-radius: 12px; padding: 10px 14px;
-    margin-left: 15%; width: fit-content; max-width: 85%; margin-left: auto;
+  .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .logo {
+    width: 30px; height: 30px; border-radius: 9px; flex: 0 0 auto;
+    background: linear-gradient(150deg, var(--accent-2), var(--accent));
+    display: grid; place-items: center; box-shadow: var(--shadow);
   }
-  .msg.bot { padding: 2px 0; }
-  .msg.err { color: #b3564f; }
-  .hint { color: var(--muted); font-size: 13px; }
-  #thinking { display: none; color: var(--muted); font-size: 13px; padding: 2px 0 14px; }
-  #thinking.on { display: block; }
-  form {
-    display: flex; gap: 10px; padding: 14px 20px 18px; border-top: 1px solid var(--line);
-    background: var(--panel);
+  .logo svg { width: 17px; height: 17px; }
+  .brand .title { font-size: 16px; font-weight: 650; letter-spacing: .2px; line-height: 1.1; }
+  .brand .tag { font-size: 12px; color: var(--muted); line-height: 1.2; }
+  .brand .stack { display: flex; flex-direction: column; min-width: 0; }
+  .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
+    font-size: 12px; color: var(--ink-2); white-space: nowrap;
   }
-  form .wrap { display: flex; gap: 10px; flex: 1; }
-  input[type=text] {
-    flex: 1; padding: 11px 14px; border: 1px solid var(--line); border-radius: 10px;
-    background: var(--bg); color: var(--ink); font: inherit; outline: none;
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .dot.ok { background: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 22%, transparent); }
+  .dot.warn { background: var(--amber); }
+  .dot.down { background: var(--danger); }
+
+  /* ---------- Conversation ---------- */
+  #log { flex: 1 1 auto; overflow-y: auto; scroll-behavior: smooth; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 26px 22px 8px; }
+
+  .welcome { padding: 40px 0 8px; animation: rise .5s ease both; }
+  .welcome h2 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.2px; }
+  .welcome p { margin: 0 0 20px; color: var(--ink-2); max-width: 46ch; }
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; }
+  .chip {
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+    padding: 9px 14px; border-radius: 999px; font: inherit; font-size: 13.5px;
+    cursor: pointer; transition: transform .12s ease, border-color .12s ease, color .12s ease;
   }
-  input[type=text]:focus { border-color: var(--accent); }
-  button {
-    padding: 11px 18px; border: 0; border-radius: 10px; background: var(--accent);
-    color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer;
+  .chip:hover { transform: translateY(-1px); border-color: var(--accent-2); color: var(--ink); }
+  .chip:active { transform: translateY(0); }
+
+  .turn { margin: 18px 0; animation: rise .34s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .turn.user { display: flex; justify-content: flex-end; }
+  .turn.user .bubble {
+    background: var(--user-bubble); color: var(--ink);
+    padding: 11px 15px; border-radius: 16px 16px 4px 16px;
+    max-width: 82%; white-space: pre-wrap; overflow-wrap: break-word;
   }
-  button:disabled { opacity: .5; cursor: default; }
-  footer { padding: 6px 20px 10px; background: var(--panel); }
-  footer .wrap { color: var(--muted); font-size: 12px; }
-  /* First-run card: shown only when the server says no model key is set. */
-  #setup {
-    display: none; margin: 24px auto; max-width: 480px; background: var(--panel);
-    border: 1px solid var(--line); border-radius: 14px; padding: 22px;
+
+  .turn.bot .who {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    font-size: 11.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
   }
-  #setup.on { display: block; }
-  #setup h2 { margin: 0 0 6px; font-size: 16px; }
-  #setup p { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
-  #setup .row { display: flex; gap: 8px; }
+  .turn.bot .who .mk {
+    width: 18px; height: 18px; border-radius: 6px; flex: 0 0 auto;
+    background: linear-gradient(150deg, var(--accent-2), var(--accent));
+  }
+  .turn.bot .body { overflow-wrap: break-word; }
+  .turn.bot .body > *:first-child { margin-top: 0; }
+  .turn.bot .body > *:last-child { margin-bottom: 0; }
+  .turn.bot .body p { margin: 0 0 12px; }
+  .turn.bot .body strong { font-weight: 650; }
+  .turn.bot .body code {
+    font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px;
+  }
+  .turn.err .body { color: var(--danger); }
+
+  .journal-title { font-size: 19px; font-weight: 650; letter-spacing: -.2px; margin: 2px 0 12px; }
+  .section-h {
+    font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--muted); margin: 20px 0 12px;
+  }
+
+  /* Timeline rendering */
+  .timeline { margin: 4px 0 6px; }
+  .tl-row {
+    display: grid; grid-template-columns: 78px 18px 1fr; gap: 10px;
+    padding-bottom: 16px; position: relative;
+  }
+  .tl-row:last-child { padding-bottom: 2px; }
+  .tl-time {
+    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ink-2); text-align: right; padding-top: 1px; font-variant-numeric: tabular-nums;
+  }
+  .tl-time small { display: block; color: var(--muted); font-size: 11.5px; }
+  .tl-rail { position: relative; display: flex; justify-content: center; }
+  .tl-rail::before {
+    content: ""; position: absolute; top: 6px; bottom: -10px; width: 2px;
+    background: var(--line); border-radius: 2px;
+  }
+  .tl-row:last-child .tl-rail::before { display: none; }
+  .tl-node {
+    width: 11px; height: 11px; border-radius: 50%; margin-top: 3px; z-index: 1;
+    background: var(--surface); border: 2px solid var(--accent-2);
+  }
+  .tl-label { padding-top: 0; }
+  .tl-label .lab { font-weight: 550; color: var(--ink); }
+  .tl-label .meta {
+    margin-top: 3px; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--muted);
+  }
+  .tl-label .meta .app {
+    padding: 1px 8px; border-radius: 999px; background: var(--accent-soft);
+    color: var(--accent); font-weight: 600; font-size: 11.5px;
+  }
+
+  /* Stats */
+  .stats { display: flex; flex-direction: column; gap: 1px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+  .stat-row { display: flex; gap: 12px; justify-content: space-between; padding: 11px 14px; background: var(--surface); }
+  .stat-row .k { color: var(--muted); font-size: 13px; flex: 0 0 auto; }
+  .stat-row .v { color: var(--ink); text-align: right; }
+
+  /* Thinking indicator */
+  #thinking { display: none; margin: 6px 0 2px; }
+  #thinking.on { display: block; animation: rise .3s ease both; }
+  .think-inner { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
+  .think-dots { display: inline-flex; gap: 4px; }
+  .think-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); animation: blink 1.2s infinite ease-in-out; }
+  .think-dots i:nth-child(2) { animation-delay: .18s; }
+  .think-dots i:nth-child(3) { animation-delay: .36s; }
+  @keyframes blink { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
+
+  /* ---------- Composer ---------- */
+  .composer-shell { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--surface); }
+  form { max-width: 760px; margin: 0 auto; padding: 14px 22px 10px; }
+  .inputrow {
+    display: flex; align-items: flex-end; gap: 10px; background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 16px; padding: 8px 8px 8px 14px;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .inputrow:focus-within { border-color: var(--accent-2); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 14%, transparent); }
+  textarea {
+    flex: 1; border: 0; background: transparent; color: var(--ink); font: inherit;
+    resize: none; outline: none; padding: 6px 0; max-height: 160px; line-height: 1.5;
+  }
+  textarea::placeholder { color: var(--muted); }
+  #send {
+    flex: 0 0 auto; width: 38px; height: 38px; border: 0; border-radius: 11px; cursor: pointer;
+    background: var(--accent); color: #fff; display: grid; place-items: center;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  #send:hover:not(:disabled) { transform: translateY(-1px); }
+  #send:disabled { opacity: .4; cursor: default; }
+  #send svg { width: 18px; height: 18px; }
+  .hint { max-width: 760px; margin: 0 auto; padding: 0 22px 12px; color: var(--muted); font-size: 11.5px; text-align: center; }
+  .hint b { font-weight: 600; color: var(--ink-2); }
+
+  /* ---------- First-run setup modal ---------- */
+  #setup-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 50;
+    background: color-mix(in srgb, #000 42%, transparent);
+    backdrop-filter: blur(3px); place-items: center; padding: 22px;
+  }
+  #setup-backdrop.on { display: grid; }
+  .modal {
+    width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 20px; padding: 26px; box-shadow: var(--shadow); animation: rise .3s ease both;
+  }
+  .modal .ico {
+    width: 44px; height: 44px; border-radius: 12px; margin-bottom: 14px;
+    background: linear-gradient(150deg, var(--accent-2), var(--accent));
+    display: grid; place-items: center;
+  }
+  .modal .ico svg { width: 22px; height: 22px; }
+  .modal h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.2px; }
+  .modal p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; }
+  .field { display: flex; gap: 8px; }
+  .field input {
+    flex: 1; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px;
+    background: var(--surface-2); color: var(--ink); font: inherit; outline: none;
+  }
+  .field input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 16%, transparent); }
+  .field button {
+    padding: 11px 18px; border: 0; border-radius: 11px; background: var(--accent); color: #fff;
+    font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .field button:disabled { opacity: .5; cursor: default; }
+  .reassure { margin: 12px 0 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+  .setup-err { margin: 10px 0 0; font-size: 13px; color: var(--danger); display: none; }
+  .setup-err.on { display: block; }
+
+  @media (max-width: 560px) {
+    .wrap, form, .hint { padding-left: 16px; padding-right: 16px; }
+    .tl-row { grid-template-columns: 66px 16px 1fr; }
+    .brand .tag { display: none; }
+  }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>Contextline</h1>
-  <span>your day, in plain words</span>
+  <div class="brand">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>
+      </svg>
+    </div>
+    <div class="stack">
+      <span class="title">Contextline</span>
+      <span class="tag">your day, in plain words</span>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="pill" id="status"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></div>
 </header>
 
 <div id="log">
   <div class="wrap">
-    <div id="setup">
-      <h2>Welcome — one thing first</h2>
-      <p>Paste the invite code you were given. It connects the app to its AI. Stored only on this Mac.</p>
-      <div class="row">
-        <input type="text" id="invite" placeholder="cl_..." autocomplete="off">
-        <button id="save-invite" type="button">Save</button>
+    <div id="welcome" class="welcome">
+      <h2>Good to see you.</h2>
+      <p>Contextline quietly turns your screen activity into a plain-language timeline of your day. Start tracking, then ask about it whenever.</p>
+      <div class="chips" id="chips">
+        <button class="chip" type="button">Start tracking my screen</button>
+        <button class="chip" type="button">What did I do today?</button>
+        <button class="chip" type="button">Where did my time go?</button>
+        <button class="chip" type="button">Ignore Slack in my focus time</button>
       </div>
     </div>
-    <div id="messages">
-      <div class="msg bot hint">Try: “start tracking my screen”, then later “what did I do today?”</div>
+    <div id="messages" aria-live="polite"></div>
+    <div id="thinking">
+      <div class="think-inner">
+        <span class="think-dots"><i></i><i></i><i></i></span>
+        <span id="think-text">Reading your day…</span>
+      </div>
     </div>
-    <div id="thinking">thinking…</div>
   </div>
 </div>
 
-<form id="composer">
-  <div class="wrap">
-    <input type="text" id="box" placeholder="Ask about your day…" autocomplete="off" autofocus>
-    <button id="send" type="submit">Send</button>
+<div class="composer-shell">
+  <form id="composer">
+    <div class="inputrow">
+      <textarea id="box" rows="1" placeholder="Ask about your day…" autocomplete="off" autofocus></textarea>
+      <button id="send" type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19V5M6 11l6-6 6 6"/>
+        </svg>
+      </button>
+    </div>
+  </form>
+  <div class="hint"><b>Enter</b> to send · <b>Shift+Enter</b> for a new line</div>
+</div>
+
+<div id="setup-backdrop">
+  <div class="modal">
+    <div class="ico" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+      </svg>
+    </div>
+    <h2>One quick thing</h2>
+    <p>Paste the invite code you were given. It connects Contextline to its AI. It's stored only on this Mac and never leaves it except to make your requests.</p>
+    <div class="field">
+      <input type="text" id="invite" placeholder="cl_…" autocomplete="off" spellcheck="false">
+      <button id="save-invite" type="button">Connect</button>
+    </div>
+    <div class="setup-err" id="setup-err">That code didn't work — double-check it and try again.</div>
+    <p class="reassure">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+      Runs locally · no account · nothing shared without you
+    </p>
   </div>
-</form>
-<footer><div class="wrap" id="status">connecting…</div></footer>
+</div>
 
 <script>
   // One chat session per page load; the server hands back a session_id on the
   // first reply and reusing it keeps refinements ("ignore Slack") alive.
   let sessionId = null;
+  let busy = false;
 
   const log = document.getElementById("log");
   const messages = document.getElementById("messages");
+  const welcome = document.getElementById("welcome");
   const thinking = document.getElementById("thinking");
   const box = document.getElementById("box");
   const send = document.getElementById("send");
 
-  function add(kind, text) {
-    const div = document.createElement("div");
-    div.className = "msg " + kind;
-    div.textContent = text;
-    messages.appendChild(div);
-    log.scrollTop = log.scrollHeight;
+  const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // Inline formatting on already-escaped text: **bold** and `code` only.
+  const inline = (s) => escapeHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>");
+
+  const RANGE = /^-\s*(\d{1,2}:\d{2})\s*[–—-]\s*(\d{1,2}:\d{2})\s*[–—-]\s*(.+)$/;
+
+  // Turn the assistant's light-markdown writeup into structured HTML. Timeline
+  // ranges become a visual rail; "## By the numbers" bullets become a stat card;
+  // everything else is prose. Non-writeup replies just fall through as <p>'s.
+  function renderReply(text) {
+    const lines = text.replace(/\r/g, "").split("\n");
+    let html = "";
+    let i = 0;
+    let section = "";  // tracks which "## ..." block we're in
+
+    const flushParas = (buf) => {
+      const t = buf.join("\n").trim();
+      if (t) html += `<p>${inline(t).replace(/\n/g, "<br>")}</p>`;
+    };
+
+    while (i < lines.length) {
+      let line = lines[i];
+
+      if (/^#\s+/.test(line)) {                        // "# Work journal — date"
+        html += `<div class="journal-title">${inline(line.replace(/^#\s+/, ""))}</div>`;
+        i++; continue;
+      }
+      if (/^##\s+/.test(line)) {                       // "## Timeline" / "## By the numbers"
+        section = line.replace(/^##\s+/, "").trim();
+        html += `<div class="section-h">${inline(section)}</div>`;
+        i++; continue;
+      }
+
+      // A run of timeline ranges -> one .timeline block.
+      if (RANGE.test(line)) {
+        let rows = "";
+        while (i < lines.length && RANGE.test(lines[i])) {
+          const m = lines[i].match(RANGE);
+          let rest = m[3].trim(), meta = "";
+          const mm = rest.match(/^(.*?)\s*\(([^)]*)\)\s*$/);   // trailing "(app, Nm)"
+          if (mm) { rest = mm[1].trim(); meta = mm[2].trim(); }
+          let metaHtml = "";
+          if (meta) {
+            const parts = meta.split(",").map((s) => s.trim());
+            const app = parts.shift() || "";
+            const dur = parts.join(", ");
+            metaHtml = `<div class="meta"><span class="app">${inline(app)}</span>${dur ? `<span>${inline(dur)}</span>` : ""}</div>`;
+          }
+          rows += `<div class="tl-row">
+              <div class="tl-time">${m[1]}<small>${m[2]}</small></div>
+              <div class="tl-rail"><div class="tl-node"></div></div>
+              <div class="tl-label"><span class="lab">${inline(rest)}</span>${metaHtml}</div>
+            </div>`;
+          i++;
+        }
+        html += `<div class="timeline">${rows}</div>`;
+        continue;
+      }
+
+      // Under "By the numbers", bullets are key: value stat rows.
+      if (/^-\s+/.test(line) && /by the numbers/i.test(section)) {
+        let rows = "";
+        while (i < lines.length && /^-\s+/.test(lines[i])) {
+          const item = lines[i].replace(/^-\s+/, "");
+          const idx = item.indexOf(":");
+          if (idx > -1) {
+            rows += `<div class="stat-row"><span class="k">${inline(item.slice(0, idx))}</span><span class="v">${inline(item.slice(idx + 1).trim())}</span></div>`;
+          } else {
+            rows += `<div class="stat-row"><span class="v">${inline(item)}</span></div>`;
+          }
+          i++;
+        }
+        html += `<div class="stats">${rows}</div>`;
+        continue;
+      }
+
+      // Generic bullet list.
+      if (/^[-*]\s+/.test(line)) {
+        let items = "";
+        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+          items += `<li>${inline(lines[i].replace(/^[-*]\s+/, ""))}</li>`;
+          i++;
+        }
+        html += `<ul style="margin:0 0 12px;padding-left:20px">${items}</ul>`;
+        continue;
+      }
+
+      // Otherwise accumulate a prose paragraph until a blank line or special line.
+      const buf = [];
+      while (i < lines.length && lines[i].trim() &&
+             !/^#{1,2}\s+/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !RANGE.test(lines[i])) {
+        buf.push(lines[i]); i++;
+      }
+      if (buf.length) flushParas(buf); else i++;   // skip blank lines
+    }
+    return html || `<p>${inline(text)}</p>`;
   }
 
-  document.getElementById("composer").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const text = box.value.trim();
-    if (!text || send.disabled) return;
-    add("user", text);
-    box.value = "";
-    send.disabled = true;
-    thinking.classList.add("on");
+  function addUser(text) {
+    welcome.style.display = "none";
+    const t = document.createElement("div");
+    t.className = "turn user";
+    const b = document.createElement("div");
+    b.className = "bubble";
+    b.textContent = text;
+    t.appendChild(b);
+    messages.appendChild(t);
+    scrollDown();
+  }
+
+  function addBot(text, isErr) {
+    const t = document.createElement("div");
+    t.className = "turn bot" + (isErr ? " err" : "");
+    t.innerHTML = `<div class="who"><span class="mk"></span>Contextline</div><div class="body"></div>`;
+    t.querySelector(".body").innerHTML = isErr ? `<p>${inline(text)}</p>` : renderReply(text);
+    messages.appendChild(t);
+    scrollDown();
+  }
+
+  function scrollDown() { log.scrollTop = log.scrollHeight; }
+
+  async function sendMessage(text) {
+    if (!text || busy) return;
+    addUser(text);
+    busy = true; send.disabled = true;
+    thinking.classList.add("on"); scrollDown();
     try {
       const res = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, session_id: sessionId }),
       });
-      if (!res.ok) throw new Error("server said " + res.status);
+      if (!res.ok) throw new Error("the server returned " + res.status);
       const data = await res.json();
       sessionId = data.session_id;
-      add("bot", data.reply);
+      addBot(data.reply, false);
     } catch (err) {
-      add("err", "Something went wrong: " + err.message);
+      addBot("Something went wrong: " + err.message + ". Is the app still running?", true);
     } finally {
-      send.disabled = false;
+      busy = false; send.disabled = false;
       thinking.classList.remove("on");
       box.focus();
     }
+  }
+
+  // Composer: auto-grow, Enter to send, Shift+Enter for newline.
+  function autogrow() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 160) + "px"; }
+  box.addEventListener("input", autogrow);
+  document.getElementById("composer").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = box.value.trim();
+    box.value = ""; autogrow();
+    sendMessage(text);
+  });
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("composer").requestSubmit(); }
   });
 
-  // Status footer — best-effort, purely informational.
+  // Suggestion chips send immediately.
+  document.getElementById("chips").addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (chip) sendMessage(chip.textContent.trim());
+  });
+
+  // ---------- Status pill (best-effort, informational) ----------
   async function refreshHealth() {
+    const dot = document.getElementById("status-dot");
+    const txt = document.getElementById("status-text");
     try {
-      const res = await fetch("/health");
-      const h = await res.json();
+      const h = await (await fetch("/health")).json();
       const pending = h.pending_events == null ? "?" : h.pending_events;
-      document.getElementById("status").textContent =
-        `model: ${h.model} · pending events: ${pending}`;
+      dot.className = "dot ok";
+      txt.textContent = `${h.model} · ${pending} pending`;
     } catch {
-      document.getElementById("status").textContent = "server unreachable";
+      dot.className = "dot down";
+      txt.textContent = "app not reachable";
     }
   }
   refreshHealth();
   setInterval(refreshHealth, 15000);
 
-  // First-run setup card. GET /setup may not exist on dev servers (older
-  // builds) — any error just keeps the card hidden.
+  // ---------- First-run setup ----------
+  const backdrop = document.getElementById("setup-backdrop");
+  const invite = document.getElementById("invite");
+  const saveBtn = document.getElementById("save-invite");
+  const setupErr = document.getElementById("setup-err");
+
   async function checkSetup() {
     try {
       const res = await fetch("/setup");
-      if (!res.ok) return;
+      if (!res.ok) return;                       // dev server without /setup — skip
       const s = await res.json();
-      if (!s.configured) document.getElementById("setup").classList.add("on");
-    } catch { /* dev server without /setup — fine */ }
+      if (!s.configured) { backdrop.classList.add("on"); invite.focus(); }
+    } catch { /* no /setup endpoint — fine */ }
   }
-  document.getElementById("save-invite").addEventListener("click", async () => {
-    const token = document.getElementById("invite").value.trim();
-    if (!token) return;
-    const res = await fetch("/setup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invite_token: token }),
-    });
-    if (res.ok) {
-      document.getElementById("setup").classList.remove("on");
-      add("bot", "You're set. Ask me anything about your day.");
+  async function saveInvite() {
+    const token = invite.value.trim();
+    if (!token) { invite.focus(); return; }
+    saveBtn.disabled = true; setupErr.classList.remove("on");
+    try {
+      const res = await fetch("/setup", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invite_token: token }),
+      });
+      if (!res.ok) throw new Error();
+      backdrop.classList.remove("on");
+      addBot("You're connected. Try “start tracking my screen”, then ask me about your day whenever you like.", false);
       box.focus();
-    } else {
-      add("err", "That code didn't save — check it and try again.");
+    } catch {
+      setupErr.classList.add("on");
+    } finally {
+      saveBtn.disabled = false;
     }
-  });
+  }
+  saveBtn.addEventListener("click", saveInvite);
+  invite.addEventListener("keydown", (e) => { if (e.key === "Enter") saveInvite(); });
+
   checkSetup();
 </script>
 </body>
