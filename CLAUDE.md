@@ -78,6 +78,18 @@ SQLite schema — minimum shape, adjust as needed:
 
 `source_event_ids` stores the list of capture event ids that were merged into that block. The anti-hallucination check in `eval.py` uses this to verify every block traces back to real captured data.
 
+## Data profiles (dev vs real — do not mix)
+
+`CONTEXTLINE_HOME` relocates the entire storage tree (see `contextline/config.py:_home`). Three profiles, strictly separated:
+
+- **Real** — `~/.contextline` (the default when `CONTEXTLINE_HOME` is unset). This is the owner's personal journal. **Agent sessions must never write here uninvited** — no mock seeding, no test pipelines, no `adk web` runs against it. Real screen capture stays consent-gated as before.
+- **Dev/test** — `<repo>/.dev_home`, gitignored. All development work goes here. Use the wrappers: `scripts/dev-seed.sh` (mock events), `scripts/dev-api.sh` (uvicorn), `scripts/dev-adk-web.sh` (ADK dev UI), or `source scripts/dev-env.sh` in a shell.
+- **Eval** — `<repo>/.eval_home`, owned by `eval.py` (it sets the env var itself). Don't touch.
+
+`pytest` already isolates via `monkeypatch` in conftest. One-time cleanup of the previously-mixed real home: `scripts/archive-real-home.sh` (moves journal data into a dated `archive-*/` subfolder, keeps `cache/`, deletes nothing).
+
+Never set `GOOGLE_GEMINI_BASE_URL` in repo `.env` or dev shells — google-genai honors it even when Vertex is configured, so it would silently hijack dev model calls. That variable belongs only to the packaged end-user app / relay tests (see `DISTRIBUTION.md`).
+
 ## Session refinements
 
 The Root Agent maintains a small state object per session (via ADK session service) that captures user-issued refinements — things like an exclusion list of apps, a preferred bucket granularity, or a focus-time definition. Whenever the Root calls downstream agents in that session, these refinements are threaded into their prompts. The refinements don't persist across sessions and don't touch SQLite — they're conversational.

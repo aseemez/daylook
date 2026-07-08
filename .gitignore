@@ -33,5 +33,14 @@ env/
 # Eval harness local state (cache + db + captures)
 .eval_home/
 
+# Dev data profile (scripts/dev-env.sh) — mock events, dev journal, dev cache
+.dev_home/
+
+# Relay verification scratch home (throwaway mock events used to prove the relay path)
+.relay_test_home/
+
+# Relay invite tokens — generated per deploy, never committed
+relay/tokens.txt
+
 # ADK dev-UI (`adk web`) runtime state (per-session SQLite, etc.)
 .adk/
