@@ -16,12 +16,18 @@ cd "$REPO_ROOT"
 BUILD_VENV="packaging/.build-venv"
 PY_VERSION="3.13.7"
 
-echo "==> Creating build venv ($PY_VERSION) at $BUILD_VENV"
-uv venv --python "$PY_VERSION" "$BUILD_VENV"
+echo "==> Ensuring build venv ($PY_VERSION) at $BUILD_VENV"
+# Reuse an existing venv (fast repeat builds); create it only if missing.
+if [[ ! -d "$BUILD_VENV" ]]; then
+    uv venv --python "$PY_VERSION" "$BUILD_VENV"
+fi
 PY="$BUILD_VENV/bin/python"
 
 echo "==> Installing pinned deps + project (with capture extras) + PyInstaller"
-uv pip install --python "$PY" \
+# --reinstall-package contextline is load-bearing: the project version rarely changes, so without
+# it uv would consider the already-installed copy "satisfied" and skip picking up local source
+# edits (e.g. the baked-in relay URL) — silently shipping a stale bundle.
+uv pip install --python "$PY" --reinstall-package contextline \
     "google-adk==2.3.0" \
     "google-genai==2.10.0" \
     "pyinstaller>=6.6" \
