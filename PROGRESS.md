@@ -2,7 +2,7 @@
 
 > Living status doc for whoever (human or agent) picks this up next. CLAUDE.md is the
 > spec / source of truth; **this file is the current state of the world**. Read both.
-> Last updated: 2026-07-07 — added `adk web` dev-UI entry point + in-chat start/stop capture control.
+> Last updated: 2026-07-09 — release track: profile separation, web UI, shared-Gemini relay, Mac `.app`, landing page.
 
 ## TL;DR
 
@@ -10,7 +10,40 @@
 runs in the `adk web` dev UI with in-chat start/stop of real capture.** The pipeline works end to
 end against real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, serves over HTTP, and
 ingests **real screenshots of the user's actual screen**, not just mock data. Tests: **51 passed,
-6 skipped** (skips are opt-in live-LLM tests + MCP-needs-npx).
+6 skipped** (skips are opt-in live-LLM tests + MCP-needs-npx). Tests now **65 passed, 6 skipped**
+after the release work below.
+
+### Release track — 2026-07-08/09 (committed locally on `main`, NOT yet pushed)
+
+Goal: hand the app to the first ~50 users for **$0**, sharing the owner's Gemini access safely.
+Plan of record: `~/.claude/plans/linked-conjuring-cookie.md` (6 phases). Full runbook: **`DISTRIBUTION.md`**.
+
+- **Phase 0 — profile separation** ✅. Dev/test now lives in a repo-local, gitignored `.dev_home`;
+  `~/.contextline` is real-data-only. Wrappers `scripts/dev-{env,seed,api,adk-web}.sh`;
+  one-time `scripts/archive-real-home.sh` (**not run yet** — waits on the user). CLAUDE.md gained
+  a "Data profiles" section: **agent sessions must never write to `~/.contextline` uninvited.**
+- **Phase 1 — web chat UI** ✅. `contextline/api/static/index.html` — a self-contained, polished
+  journal-styled chat page (not the raw FastAPI look), served at `GET /`. Renders the Journalist
+  writeup into a visual timeline.
+- **Phase 2 — relay** ⏳ *code done, deploy deferred*. `relay/` FastAPI proxy: invite token in
+  `x-goog-api-key`, model-locked to flash, per-token daily quota, forwards to Vertex with the Cloud
+  Run service account's ADC. **Proven end-to-end locally** (dev ADC, incl. a 202 KB vision batch;
+  401/403/429 all correct). **`gcloud run deploy` is an outward-facing action still awaiting the
+  user's go-ahead**; after deploy, set `settings.DEFAULT_RELAY_URL` to the Cloud Run URL.
+- **Phase 3 — client wiring** ✅. `contextline/settings.py` (`<home>/settings.json`, `relay` vs
+  `own_key` mode, `apply_to_env`), `contextline/launcher.py` (packaged entry, picks a port, opens
+  browser after `/health`, `--smoke`), and `GET/POST /setup` for the first-run invite card. First-run
+  flow proven: unconfigured → /setup → /chat routes through the relay with **no restart** (ADK builds
+  its client lazily).
+- **Phase 4 — Mac `.app`** ✅. `packaging/{contextline.spec,entry.py,build.sh,make_dmg.sh}`. Built
+  a working **97 MB `.app`** and **52 MB `.dmg`** on Python 3.13.7 (frozen bundle boots, serves the
+  UI, capture dry-run works, routes through the relay). `config.py` skips `.env` when frozen;
+  `root.py` re-launches the bundle with `--capture` when frozen. `tests/test_packaging.py` locks the
+  seams. arm64-only, **unsigned** (Gatekeeper "Open Anyway" — signing is the money-later Mac step).
+- **Phase 5 — landing + release** ⏳. `docs/index.html` (+ `.nojekyll`) landing page with the
+  Download button and install walkthrough; `DISTRIBUTION.md` runbook written. **Remaining (all
+  outward-facing, deferred to the user): `gh release create v0.1.0 dist/Contextline.dmg`, enable
+  GitHub Pages, and `git push`.**
 
 ### New since 2026-07-05 (this session's work — all pushed to `main`)
 - **`adk web` support** (`2208438`). New package `adk_web/contextline_agent/` exposes a
