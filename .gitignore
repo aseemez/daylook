@@ -47,3 +47,11 @@ relay/tokens.txt
 
 # Launcher first-run verification scratch home
 .launch_test_home/
+
+# PyInstaller build env + artifacts
+packaging/.build-venv/
+build/
+dist/
+
+# Frozen-app verification scratch home
+.frozen_test_home/

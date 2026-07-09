@@ -8,13 +8,19 @@ source of truth. Paths default to ``~/.contextline`` but can be relocated with t
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 # Load .env from the repo root if present. Real credentials come from ADC, not here;
 # .env only carries the Vertex routing vars (project, location, USE_VERTEXAI).
-load_dotenv()
+#
+# Skip this entirely in a frozen (PyInstaller) app: load_dotenv() searches *up the filesystem*
+# from this module, so a bundle that happens to sit under a directory containing a .env would
+# silently inherit it. The packaged app's environment is owned by the launcher — never a .env.
+if not getattr(sys, "frozen", False):
+    load_dotenv()
 
 
 def _home() -> Path:

@@ -172,7 +172,13 @@ class RootAgent:
         if self._capture_proc is not None and self._capture_proc.poll() is None:
             return {"status": "already_running", "pid": self._capture_proc.pid}
 
-        cmd = [sys.executable, "-m", "contextline.capture_script.real_capture"]
+        # In a normal install we re-invoke the interpreter with ``-m``. In a frozen (PyInstaller)
+        # bundle there's no ``-m`` and ``sys.executable`` is the app itself, so we re-launch the
+        # bundle with a ``--capture`` marker that packaging/entry.py routes to real_capture.main.
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--capture"]
+        else:
+            cmd = [sys.executable, "-m", "contextline.capture_script.real_capture"]
         if minutes and minutes > 0:
             cmd += ["--minutes", str(minutes)]
         if dry_run:
