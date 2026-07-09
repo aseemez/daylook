@@ -64,13 +64,17 @@ monthly cap) so credit burn is visible before it hurts.
 
 ### Point the app at the deployed relay
 
-Once Cloud Run returns a URL, set it as the app's default in **one** place:
+The live relay is baked into the client as `contextline/settings.py` →
+`DEFAULT_RELAY_URL`:
 
-- `contextline/settings.py` → `DEFAULT_RELAY_URL` (bake the URL into the build), **or**
-- ship the build with `CONTEXTLINE_RELAY_URL=<url>` in the launcher env.
+```
+https://contextline-relay-862472415362.us-central1.run.app
+```
 
-Until this is set, `DEFAULT_RELAY_URL` is empty and a user in `relay` mode has no
-endpoint — so this step gates the first real release.
+So the packaged app works with nothing but an invite token. Override per-machine
+with `CONTEXTLINE_RELAY_URL` (e.g. to point a dev build at a staging relay). If
+you redeploy under a new URL, update that constant and **rebuild the `.app`** —
+the URL is compiled into the bundle, not read from a config file at runtime.
 
 ### Rotating / revoking tokens
 

@@ -25,10 +25,14 @@ import os
 
 from contextline import config
 
-# The deployed relay URL. Empty until the relay is live on Cloud Run; set it here at release
-# time (or override per-machine with CONTEXTLINE_RELAY_URL). Kept out of code paths that could
-# leak it into dev — it only matters inside the packaged app.
-DEFAULT_RELAY_URL = os.environ.get("CONTEXTLINE_RELAY_URL", "")
+# The deployed relay URL — the Cloud Run service that holds the real Google credentials and
+# fans out to Vertex for invited users. Baked in as the default so the packaged app works with
+# nothing but an invite token; override per-machine with CONTEXTLINE_RELAY_URL (e.g. to point a
+# dev build at a staging relay). Only consulted in "relay" mode.
+DEFAULT_RELAY_URL = os.environ.get(
+    "CONTEXTLINE_RELAY_URL",
+    "https://contextline-relay-862472415362.us-central1.run.app",
+)
 
 _DEFAULTS: dict = {
     "api_key_mode": "relay",   # "relay" | "own_key"
