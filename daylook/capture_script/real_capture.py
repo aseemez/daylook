@@ -253,15 +253,24 @@ def run(
     dry_run: bool = False,
     max_events: int | None = None,
     duration_seconds: float | None = None,
+    stop_event: "object | None" = None,
 ) -> int:
     """Poll the frontmost window; emit switch events on debounced context changes and
     heartbeat events every ``heartbeat_seconds`` of stable same-window work (0 disables).
 
     Runs until Ctrl-C, or until any of the optional stop conditions is reached: ``once`` (one
-    event), ``max_events`` (a count), or ``duration_seconds`` (a wall-clock limit — the "run it
-    for 5 minutes and stop" control). Returns the number of events written. ``dry_run`` prints
+    event), ``max_events`` (a count), ``duration_seconds`` (a wall-clock limit), or
+    ``stop_event`` being set. Returns the number of events written. ``dry_run`` prints
     switches/heartbeats without writing anything (and needs no ``mss``).
+
+    ``stop_event`` (a ``threading.Event``) is what lets the app run capture **in its own
+    process on a background thread** instead of spawning a child: the app already holds the
+    macOS Screen Recording grant, so recording from inside it means macOS doesn't see a second,
+    separate capture client and stop re-prompting every launch. The loop waits on the event
+    between polls so a stop request is honoured within one poll interval.
     """
+    def _stopping() -> bool:
+        return stop_event is not None and stop_event.is_set()
     config.ensure_dirs()
     pending = Path(pending) if pending is not None else config.pending_dir()
     pending.mkdir(parents=True, exist_ok=True)
@@ -279,6 +288,9 @@ def run(
           f"debounce={debounce_seconds}s{hb_note}){'  [DRY RUN]' if dry_run else ''}. {stop_note}.")
     try:
         while True:
+            if _stopping():
+                print(f"\n[real_capture] stop requested. Wrote {written} event(s) to {pending}.")
+                break
             if duration_seconds is not None and time.monotonic() - start >= duration_seconds:
                 print(f"\n[real_capture] reached {duration_seconds/60:.0f}-min limit. "
                       f"Wrote {written} event(s) to {pending}.")
@@ -302,7 +314,13 @@ def run(
                     print(f"[event]  {event.event_id}  ({kind})  {app_name} — {window_title!r}")
                 if once or (max_events is not None and written >= max_events):
                     break
-            time.sleep(poll_seconds)
+            # Interruptible wait: a threading.Event lets an in-process stop land within one
+            # poll; plain time.sleep otherwise (CLI / subprocess use, stopped via Ctrl-C).
+            if stop_event is not None:
+                if stop_event.wait(poll_seconds):
+                    continue  # loop top notices _stopping() and exits cleanly
+            else:
+                time.sleep(poll_seconds)
     except KeyboardInterrupt:
         print(f"\n[real_capture] stopped. Wrote {written} event(s) to {pending}.")
     finally:

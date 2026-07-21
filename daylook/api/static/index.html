@@ -1,16 +1,19 @@
 <!doctype html>
 <!--
-  DayLook chat UI — one self-contained file on purpose: no CDN, no build
-  step, works offline, and PyInstaller ships it as plain package data. Talks to
-  the same-origin FastAPI endpoints:
-    GET  /health  -> connection status
-    GET  /setup   -> is an invite code configured? (may not exist on dev)
-    POST /setup   -> save invite code
-    POST /chat    -> {"message","session_id"} -> {"reply","session_id"}
+  DayLook — one self-contained file on purpose: no CDN, no build step, works
+  offline, and PyInstaller ships it as plain package data. Talks to the
+  same-origin FastAPI endpoints:
+    GET  /health          -> connection status
+    GET  /setup           -> is an invite code configured? (may not exist on dev)
+    POST /setup           -> save invite code
+    POST /chat            -> {"message","session_id"} -> {"reply","session_id"}
+    GET  /journal/dates   -> {"dates":[...]}                (sidebar day list)
+    GET  /journal/{date}  -> {writeup, blocks, time_by_*}   (journal pane)
 
-  The user names the assistant on first run (stored in localStorage); that name
-  labels every reply. The assistant's daily writeup comes back as light markdown
-  and renderReply() turns it into a visual timeline.
+  Layout is two panes, Claude-web style: a left sidebar holds the assistant
+  (chat) and the day-by-day journal list; the main pane shows whichever is
+  selected. Old days live in SQLite (the Memory agent) and the assistant can
+  query them in chat. The user names the assistant on first run (localStorage).
 -->
 <html lang="en">
 <head>
@@ -20,7 +23,7 @@
 <style>
   /* Warm "golden hour at home" palette: honey + terracotta on cream. */
   :root {
-    --bg: #FBF4E9; --surface: #FFFCF6; --surface-2: #FAF2E4;
+    --bg: #FBF4E9; --surface: #FFFCF6; --surface-2: #FAF2E4; --sidebar: #F6EAD6;
     --ink: #2C2118; --ink-2: #6E5F50; --muted: #A2917E;
     --line: #ECE0CE; --line-2: #F3E9D9;
     --accent: #DB8B36; --accent-2: #F0AC5B; --clay: #C0633A; --accent-soft: #FBEEDA;
@@ -30,7 +33,7 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #191310; --surface: #241C15; --surface-2: #2B2118;
+      --bg: #191310; --surface: #241C15; --surface-2: #2B2118; --sidebar: #1F1811;
       --ink: #F1E7D8; --ink-2: #C4B5A2; --muted: #907F6D;
       --line: #382A1D; --line-2: #2E2216;
       --accent: #EBA557; --accent-2: #F7C079; --clay: #DB8B5C; --accent-soft: #2C2015;
@@ -41,48 +44,70 @@
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; color: var(--ink);
-    background: radial-gradient(130% 70% at 50% -15%, var(--accent-soft), var(--bg) 52%);
+    margin: 0; color: var(--ink); background: var(--bg);
     font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
     -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-    display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+    display: flex; height: 100dvh; overflow: hidden;
   }
   ::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 
-  /* ---------- Header ---------- */
-  header {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
-    padding: 13px 22px; border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface) 78%, transparent);
-    backdrop-filter: saturate(1.2) blur(10px);
+  /* ============================= Sidebar ============================= */
+  .sidebar {
+    flex: 0 0 266px; width: 266px; display: flex; flex-direction: column;
+    background: var(--sidebar); border-right: 1px solid var(--line); min-height: 0;
   }
-  .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .sb-brand { display: flex; align-items: center; gap: 11px; padding: 16px 18px 14px; }
   .logo {
-    width: 32px; height: 32px; border-radius: 10px; flex: 0 0 auto; display: grid; place-items: center;
+    width: 34px; height: 34px; border-radius: 10px; flex: 0 0 auto; display: grid; place-items: center;
     background: linear-gradient(145deg, var(--accent-2), var(--clay));
     box-shadow: 0 5px 14px color-mix(in srgb, var(--clay) 38%, transparent), inset 0 1px 0 rgba(255,255,255,.35);
   }
-  .logo svg { width: 19px; height: 19px; }
-  .brand .title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; line-height: 1.1; }
-  .brand .title span { color: var(--accent); }
-  .brand .tag { font-size: 12px; color: var(--muted); line-height: 1.2; }
-  .brand .stack { display: flex; flex-direction: column; min-width: 0; }
-  .spacer { flex: 1; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
-    border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
-    font-size: 12px; color: var(--ink-2); white-space: nowrap;
+  .logo svg { width: 20px; height: 20px; }
+  .sb-brand .title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; }
+  .sb-brand .title span { color: var(--accent); }
+  .sb-brand .tag { font-size: 11.5px; color: var(--muted); line-height: 1.2; }
+  .sb-brand .stack { display: flex; flex-direction: column; min-width: 0; }
+
+  .sb-scroll { flex: 1 1 auto; overflow-y: auto; padding: 6px 10px 10px; min-height: 0; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    border: 0; background: transparent; color: var(--ink); font: inherit;
+    padding: 10px 12px; border-radius: 10px; cursor: pointer; margin-bottom: 2px;
+    transition: background .13s ease;
   }
+  .nav-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .nav-item.active { background: color-mix(in srgb, var(--accent) 20%, transparent); font-weight: 600; }
+  .nav-item svg { width: 17px; height: 17px; flex: 0 0 auto; color: var(--clay); }
+  .nav-item .n-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .sb-section { display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 12px 7px; font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); }
+  .day-item { display: block; }
+  .day-item .d-main { font-size: 14px; }
+  .day-item .d-sub { display: block; font-size: 11.5px; color: var(--muted); font-weight: 400; }
+  .day-item.active .d-sub { color: color-mix(in srgb, var(--ink-2) 90%, transparent); }
+  .sb-empty { padding: 6px 12px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+
+  .sb-foot { flex: 0 0 auto; padding: 11px 16px; border-top: 1px solid var(--line); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
   .dot.ok { background: #5aa06a; box-shadow: 0 0 0 3px color-mix(in srgb, #5aa06a 24%, transparent); }
   .dot.down { background: var(--danger); }
   @media (prefers-color-scheme: dark) { .dot.ok { background: #7bbf88; } }
 
+  /* ============================= Main pane ============================= */
+  .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    background: radial-gradient(130% 60% at 50% -12%, var(--accent-soft), var(--bg) 50%); }
+  .topbar { display: none; }
+  .view { flex: 1 1 auto; display: none; flex-direction: column; min-height: 0; }
+  .view.show { display: flex; }
+
   /* ---------- Conversation ---------- */
   #log { flex: 1 1 auto; overflow-y: auto; scroll-behavior: smooth; }
   .wrap { max-width: 760px; margin: 0 auto; padding: 28px 22px 8px; }
 
-  .welcome { padding: 44px 0 8px; animation: rise .55s var(--spring) both; }
+  .welcome { padding: 40px 0 8px; animation: rise .55s var(--spring) both; }
   .welcome h2 { font-size: 24px; margin: 0 0 8px; letter-spacing: -.02em; }
   .welcome p { margin: 0 0 22px; color: var(--ink-2); max-width: 48ch; }
   .chips { display: flex; flex-wrap: wrap; gap: 9px; }
@@ -103,15 +128,12 @@
     padding: 11px 15px; border-radius: 16px 16px 4px 16px;
     max-width: 82%; white-space: pre-wrap; overflow-wrap: break-word;
   }
-
   .turn.bot .who {
     display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
     font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
   }
-  .turn.bot .who .mk {
-    width: 18px; height: 18px; border-radius: 6px; flex: 0 0 auto;
-    background: linear-gradient(145deg, var(--accent-2), var(--clay));
-  }
+  .turn.bot .who .mk { width: 18px; height: 18px; border-radius: 6px; flex: 0 0 auto;
+    background: linear-gradient(145deg, var(--accent-2), var(--clay)); }
   .turn.bot .body { overflow-wrap: break-word; }
   .turn.bot .body > *:first-child { margin-top: 0; }
   .turn.bot .body > *:last-child { margin-bottom: 0; }
@@ -124,19 +146,15 @@
   .turn.err .body { color: var(--danger); }
 
   .journal-title { font-size: 19px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 12px; }
-  .section-h {
-    font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
-    color: var(--muted); margin: 20px 0 12px;
-  }
+  .section-h { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--muted); margin: 20px 0 12px; }
 
-  /* Timeline rendering */
+  /* Timeline rendering (shared by chat answers and the journal pane) */
   .timeline { margin: 4px 0 6px; }
   .tl-row { display: grid; grid-template-columns: 78px 18px 1fr; gap: 10px; padding-bottom: 16px; position: relative; }
   .tl-row:last-child { padding-bottom: 2px; }
-  .tl-time {
-    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: var(--ink-2); text-align: right; padding-top: 1px; font-variant-numeric: tabular-nums;
-  }
+  .tl-time { font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ink-2); text-align: right; padding-top: 1px; font-variant-numeric: tabular-nums; }
   .tl-time small { display: block; color: var(--muted); font-size: 11.5px; }
   .tl-rail { position: relative; display: flex; justify-content: center; }
   .tl-rail::before { content: ""; position: absolute; top: 6px; bottom: -10px; width: 2px; background: var(--line); border-radius: 2px; }
@@ -144,7 +162,7 @@
   .tl-node { width: 11px; height: 11px; border-radius: 50%; margin-top: 3px; z-index: 1; background: var(--surface); border: 2px solid var(--accent); }
   .tl-label { padding-top: 0; }
   .tl-label .lab { font-weight: 550; color: var(--ink); }
-  .tl-label .meta { margin-top: 3px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .tl-label .meta { margin-top: 3px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
   .tl-label .meta .app { padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--clay); font-weight: 600; font-size: 11.5px; }
 
   /* Stats */
@@ -166,22 +184,16 @@
   /* ---------- Composer ---------- */
   .composer-shell { flex: 0 0 auto; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); }
   form { max-width: 760px; margin: 0 auto; padding: 14px 22px 10px; }
-  .inputrow {
-    display: flex; align-items: flex-end; gap: 10px; background: var(--surface-2);
+  .inputrow { display: flex; align-items: flex-end; gap: 10px; background: var(--surface-2);
     border: 1px solid var(--line); border-radius: 16px; padding: 8px 8px 8px 14px;
-    transition: border-color .15s ease, box-shadow .15s ease;
-  }
+    transition: border-color .15s ease, box-shadow .15s ease; }
   .inputrow:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
-  textarea {
-    flex: 1; border: 0; background: transparent; color: var(--ink); font: inherit;
-    resize: none; outline: none; padding: 6px 0; max-height: 160px; line-height: 1.5;
-  }
+  textarea { flex: 1; border: 0; background: transparent; color: var(--ink); font: inherit;
+    resize: none; outline: none; padding: 6px 0; max-height: 160px; line-height: 1.5; }
   textarea::placeholder { color: var(--muted); }
-  #send {
-    flex: 0 0 auto; width: 38px; height: 38px; border: 0; border-radius: 11px; cursor: pointer;
+  #send { flex: 0 0 auto; width: 38px; height: 38px; border: 0; border-radius: 11px; cursor: pointer;
     background: linear-gradient(145deg, var(--accent-2), var(--accent)); color: #3a230c; display: grid; place-items: center;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.35); transition: transform .12s var(--spring), opacity .12s ease;
-  }
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.35); transition: transform .12s var(--spring), opacity .12s ease; }
   @media (prefers-color-scheme: dark) { #send { color: #241408; } }
   #send:hover:not(:disabled) { transform: translateY(-1px); }
   #send:disabled { opacity: .4; cursor: default; }
@@ -189,52 +201,65 @@
   .hint { max-width: 760px; margin: 0 auto; padding: 0 22px 12px; color: var(--muted); font-size: 11.5px; text-align: center; }
   .hint b { font-weight: 600; color: var(--ink-2); }
 
+  /* ---------- Journal pane ---------- */
+  .journal-scroll { flex: 1 1 auto; overflow-y: auto; }
+  .journal-page { max-width: 760px; margin: 0 auto; padding: 30px 24px 60px; animation: rise .4s var(--spring) both; }
+  .j-head { margin-bottom: 6px; }
+  .j-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--clay); }
+  .j-date { font-size: 27px; font-weight: 760; letter-spacing: -.02em; margin: 4px 0 4px; }
+  .j-total { color: var(--ink-2); font-size: 14.5px; margin: 0 0 18px; }
+  .j-narrative { color: var(--ink); font-size: 15.5px; line-height: 1.66; margin: 0 0 6px; }
+  .j-empty { color: var(--ink-2); font-size: 15px; padding: 30px 0; }
+
   /* ---------- First-run setup modal ---------- */
-  #setup-backdrop {
-    display: none; position: fixed; inset: 0; z-index: 50;
-    background: color-mix(in srgb, #2c2118 46%, transparent);
-    backdrop-filter: blur(4px); place-items: center; padding: 22px;
-  }
+  #setup-backdrop { display: none; position: fixed; inset: 0; z-index: 50;
+    background: color-mix(in srgb, #2c2118 46%, transparent); backdrop-filter: blur(4px); place-items: center; padding: 22px; }
   #setup-backdrop.on { display: grid; }
-  .modal {
-    width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line);
-    border-radius: 20px; padding: 28px; box-shadow: var(--shadow); animation: rise .3s var(--spring) both;
-  }
-  .modal .ico {
-    width: 46px; height: 46px; border-radius: 13px; margin-bottom: 15px; display: grid; place-items: center;
+  .modal { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 20px; padding: 28px; box-shadow: var(--shadow); animation: rise .3s var(--spring) both; }
+  .modal .ico { width: 46px; height: 46px; border-radius: 13px; margin-bottom: 15px; display: grid; place-items: center;
     background: linear-gradient(145deg, var(--accent-2), var(--clay));
-    box-shadow: 0 6px 16px color-mix(in srgb, var(--clay) 36%, transparent), inset 0 1px 0 rgba(255,255,255,.35);
-  }
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--clay) 36%, transparent), inset 0 1px 0 rgba(255,255,255,.35); }
   .modal .ico svg { width: 23px; height: 23px; }
   .modal h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.02em; }
   .modal p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; }
   .field { display: flex; gap: 8px; }
-  .field input {
-    flex: 1; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
-    background: var(--surface-2); color: var(--ink); font: inherit; outline: none;
-  }
+  .field input { flex: 1; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--surface-2); color: var(--ink); font: inherit; outline: none; }
   .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
-  .field button {
-    padding: 12px 20px; border: 0; border-radius: 12px; color: #3a230c; font: inherit; font-weight: 650; cursor: pointer;
-    background: linear-gradient(145deg, var(--accent-2), var(--accent)); box-shadow: inset 0 1px 0 rgba(255,255,255,.35);
-  }
+  .field button { padding: 12px 20px; border: 0; border-radius: 12px; color: #3a230c; font: inherit; font-weight: 650; cursor: pointer;
+    background: linear-gradient(145deg, var(--accent-2), var(--accent)); box-shadow: inset 0 1px 0 rgba(255,255,255,.35); }
   @media (prefers-color-scheme: dark) { .field button { color: #241408; } }
   .field button:disabled { opacity: .5; cursor: default; }
   .reassure { margin: 13px 0 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
   .setup-err { margin: 10px 0 0; font-size: 13px; color: var(--danger); display: none; }
   .setup-err.on { display: block; }
 
-  @media (max-width: 560px) {
-    .wrap, form, .hint { padding-left: 16px; padding-right: 16px; }
+  /* ---------- Mobile: sidebar becomes a drawer ---------- */
+  .sb-backdrop { display: none; position: fixed; inset: 0; z-index: 30; background: color-mix(in srgb, #2c2118 40%, transparent); }
+  @media (max-width: 820px) {
+    .sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; transform: translateX(-100%);
+      transition: transform .28s var(--spring); box-shadow: var(--shadow); }
+    .sidebar.open { transform: none; }
+    .sb-backdrop.on { display: block; }
+    .topbar { display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
+      padding: 11px 16px; border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: blur(10px); }
+    .hamburger { border: 1px solid var(--line); background: var(--surface); border-radius: 10px;
+      width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer; color: var(--ink-2); }
+    .hamburger svg { width: 18px; height: 18px; }
+    .topbar .tb-title { font-weight: 700; }
+    .topbar .tb-title span { color: var(--accent); }
+    .wrap, form, .hint, .journal-page { padding-left: 16px; padding-right: 16px; }
     .tl-row { grid-template-columns: 66px 16px 1fr; }
-    .brand .tag { display: none; }
   }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="brand">
+<!-- ============================= Sidebar ============================= -->
+<aside class="sidebar" id="sidebar">
+  <div class="sb-brand">
     <div class="logo" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="4.4" fill="#fff" stroke="none"/>
@@ -246,46 +271,77 @@
       <span class="tag">your day, in plain words</span>
     </div>
   </div>
-  <div class="spacer"></div>
-  <div class="pill" id="status"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></div>
-</header>
 
-<div id="log">
-  <div class="wrap">
-    <div id="welcome" class="welcome">
-      <h2>Good to see you.</h2>
-      <p>DayLook quietly turns your screen activity into a plain-language timeline of your day. Start tracking, then ask about it whenever.</p>
-      <div class="chips" id="chips">
-        <button class="chip" type="button">Start tracking my screen</button>
-        <button class="chip" type="button">What did I do today?</button>
-        <button class="chip" type="button">Where did my time go?</button>
-        <button class="chip" type="button">Ignore Slack in my focus time</button>
-      </div>
-    </div>
-    <div id="messages" aria-live="polite"></div>
-    <div id="thinking">
-      <div class="think-inner">
-        <span class="think-dots"><i></i><i></i><i></i></span>
-        <span id="think-text">Reading your day…</span>
-      </div>
-    </div>
+  <div class="sb-scroll">
+    <button class="nav-item active" id="nav-chat" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>
+      <span class="n-main" id="nav-chat-label">Assistant</span>
+    </button>
+
+    <div class="sb-section"><span>Journal</span></div>
+    <div id="day-list"></div>
   </div>
-</div>
 
-<div class="composer-shell">
-  <form id="composer">
-    <div class="inputrow">
-      <textarea id="box" rows="1" placeholder="Ask about your day…" autocomplete="off" autofocus></textarea>
-      <button id="send" type="submit" aria-label="Send">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 19V5M6 11l6-6 6 6"/>
-        </svg>
-      </button>
+  <div class="sb-foot">
+    <span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></span>
+  </div>
+</aside>
+<div class="sb-backdrop" id="sb-backdrop"></div>
+
+<!-- ============================= Main pane ============================= -->
+<main class="main">
+  <div class="topbar">
+    <button class="hamburger" id="hamburger" type="button" aria-label="Menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <span class="tb-title">Day<span>Look</span></span>
+  </div>
+
+  <!-- Chat view -->
+  <section class="view show" id="chat-view">
+    <div id="log">
+      <div class="wrap">
+        <div id="welcome" class="welcome">
+          <h2>Good to see you.</h2>
+          <p>DayLook quietly turns your screen activity into a plain-language timeline of your day. Start tracking, then ask about it whenever. Your finished days appear in the Journal on the left.</p>
+          <div class="chips" id="chips">
+            <button class="chip" type="button">Start tracking my screen</button>
+            <button class="chip" type="button">What did I do today?</button>
+            <button class="chip" type="button">Where did my time go?</button>
+            <button class="chip" type="button">Ignore Slack in my focus time</button>
+          </div>
+        </div>
+        <div id="messages" aria-live="polite"></div>
+        <div id="thinking">
+          <div class="think-inner">
+            <span class="think-dots"><i></i><i></i><i></i></span>
+            <span id="think-text">Reading your day…</span>
+          </div>
+        </div>
+      </div>
     </div>
-  </form>
-  <div class="hint"><b>Enter</b> to send · <b>Shift+Enter</b> for a new line</div>
-</div>
+    <div class="composer-shell">
+      <form id="composer">
+        <div class="inputrow">
+          <textarea id="box" rows="1" placeholder="Ask about your day…" autocomplete="off" autofocus></textarea>
+          <button id="send" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </form>
+      <div class="hint"><b>Enter</b> to send · <b>Shift+Enter</b> for a new line</div>
+    </div>
+  </section>
 
+  <!-- Journal view -->
+  <section class="view" id="journal-view">
+    <div class="journal-scroll">
+      <div class="journal-page" id="journal-page"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ============================= Setup modal ============================= -->
 <div id="setup-backdrop">
   <div class="modal">
     <div class="ico" aria-hidden="true">
@@ -316,12 +372,9 @@
   let assistantName = localStorage.getItem("dl_assistant_name") || "";
   let awaitingName = false;
 
-  const log = document.getElementById("log");
-  const messages = document.getElementById("messages");
-  const welcome = document.getElementById("welcome");
-  const thinking = document.getElementById("thinking");
-  const box = document.getElementById("box");
-  const send = document.getElementById("send");
+  const $ = (id) => document.getElementById(id);
+  const log = $("log"), messages = $("messages"), welcome = $("welcome");
+  const thinking = $("thinking"), box = $("box"), send = $("send");
 
   const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -330,32 +383,27 @@
     .replace(/`([^`]+)`/g, "<code>$1</code>");
   const botLabel = () => escapeHtml(assistantName || "Assistant");
 
+  // ---------- shared formatting ----------
+  function fmtDur(secs) {
+    const m = Math.round((secs || 0) / 60);
+    if (m < 1) return "<1m";
+    if (m < 60) return m + "m";
+    const h = Math.floor(m / 60), r = m % 60;
+    return r ? `${h}h ${r}m` : `${h}h`;
+  }
+  function hhmm(iso) { return (iso || "").slice(11, 16); }
+
+  // ---------- markdown-ish renderer for chat replies (writeup) ----------
   const RANGE = /^-\s*(\d{1,2}:\d{2})\s*[–—-]\s*(\d{1,2}:\d{2})\s*[–—-]\s*(.+)$/;
 
   function renderReply(text) {
     const lines = text.replace(/\r/g, "").split("\n");
-    let html = "";
-    let i = 0;
-    let section = "";
-
-    const flushParas = (buf) => {
-      const t = buf.join("\n").trim();
-      if (t) html += `<p>${inline(t).replace(/\n/g, "<br>")}</p>`;
-    };
-
+    let html = "", i = 0, section = "";
+    const flushParas = (buf) => { const t = buf.join("\n").trim(); if (t) html += `<p>${inline(t).replace(/\n/g, "<br>")}</p>`; };
     while (i < lines.length) {
       let line = lines[i];
-
-      if (/^#\s+/.test(line)) {
-        html += `<div class="journal-title">${inline(line.replace(/^#\s+/, ""))}</div>`;
-        i++; continue;
-      }
-      if (/^##\s+/.test(line)) {
-        section = line.replace(/^##\s+/, "").trim();
-        html += `<div class="section-h">${inline(section)}</div>`;
-        i++; continue;
-      }
-
+      if (/^#\s+/.test(line)) { html += `<div class="journal-title">${inline(line.replace(/^#\s+/, ""))}</div>`; i++; continue; }
+      if (/^##\s+/.test(line)) { section = line.replace(/^##\s+/, "").trim(); html += `<div class="section-h">${inline(section)}</div>`; i++; continue; }
       if (RANGE.test(line)) {
         let rows = "";
         while (i < lines.length && RANGE.test(lines[i])) {
@@ -370,197 +418,237 @@
             const dur = parts.join(", ");
             metaHtml = `<div class="meta"><span class="app">${inline(app)}</span>${dur ? `<span>${inline(dur)}</span>` : ""}</div>`;
           }
-          rows += `<div class="tl-row">
-              <div class="tl-time">${m[1]}<small>${m[2]}</small></div>
-              <div class="tl-rail"><div class="tl-node"></div></div>
-              <div class="tl-label"><span class="lab">${inline(rest)}</span>${metaHtml}</div>
-            </div>`;
+          rows += `<div class="tl-row"><div class="tl-time">${m[1]}<small>${m[2]}</small></div><div class="tl-rail"><div class="tl-node"></div></div><div class="tl-label"><span class="lab">${inline(rest)}</span>${metaHtml}</div></div>`;
           i++;
         }
-        html += `<div class="timeline">${rows}</div>`;
-        continue;
+        html += `<div class="timeline">${rows}</div>`; continue;
       }
-
       if (/^-\s+/.test(line) && /by the numbers/i.test(section)) {
         let rows = "";
         while (i < lines.length && /^-\s+/.test(lines[i])) {
-          const item = lines[i].replace(/^-\s+/, "");
-          const idx = item.indexOf(":");
-          if (idx > -1) {
-            rows += `<div class="stat-row"><span class="k">${inline(item.slice(0, idx))}</span><span class="v">${inline(item.slice(idx + 1).trim())}</span></div>`;
-          } else {
-            rows += `<div class="stat-row"><span class="v">${inline(item)}</span></div>`;
-          }
+          const item = lines[i].replace(/^-\s+/, ""); const idx = item.indexOf(":");
+          rows += idx > -1
+            ? `<div class="stat-row"><span class="k">${inline(item.slice(0, idx))}</span><span class="v">${inline(item.slice(idx + 1).trim())}</span></div>`
+            : `<div class="stat-row"><span class="v">${inline(item)}</span></div>`;
           i++;
         }
-        html += `<div class="stats">${rows}</div>`;
-        continue;
+        html += `<div class="stats">${rows}</div>`; continue;
       }
-
       if (/^[-*]\s+/.test(line)) {
         let items = "";
-        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
-          items += `<li>${inline(lines[i].replace(/^[-*]\s+/, ""))}</li>`;
-          i++;
-        }
-        html += `<ul style="margin:0 0 12px;padding-left:20px">${items}</ul>`;
-        continue;
+        while (i < lines.length && /^[-*]\s+/.test(lines[i])) { items += `<li>${inline(lines[i].replace(/^[-*]\s+/, ""))}</li>`; i++; }
+        html += `<ul style="margin:0 0 12px;padding-left:20px">${items}</ul>`; continue;
       }
-
       const buf = [];
-      while (i < lines.length && lines[i].trim() &&
-             !/^#{1,2}\s+/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !RANGE.test(lines[i])) {
-        buf.push(lines[i]); i++;
-      }
+      while (i < lines.length && lines[i].trim() && !/^#{1,2}\s+/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !RANGE.test(lines[i])) { buf.push(lines[i]); i++; }
       if (buf.length) flushParas(buf); else i++;
     }
     return html || `<p>${inline(text)}</p>`;
   }
 
+  // ---------- chat plumbing ----------
   function addUser(text) {
     welcome.style.display = "none";
-    const t = document.createElement("div");
-    t.className = "turn user";
-    const b = document.createElement("div");
-    b.className = "bubble";
-    b.textContent = text;
-    t.appendChild(b);
-    messages.appendChild(t);
-    scrollDown();
+    const t = document.createElement("div"); t.className = "turn user";
+    const b = document.createElement("div"); b.className = "bubble"; b.textContent = text;
+    t.appendChild(b); messages.appendChild(t); scrollDown();
   }
-
   function addBot(text, isErr) {
     welcome.style.display = "none";
-    const t = document.createElement("div");
-    t.className = "turn bot" + (isErr ? " err" : "");
+    const t = document.createElement("div"); t.className = "turn bot" + (isErr ? " err" : "");
     t.innerHTML = `<div class="who"><span class="mk"></span>${botLabel()}</div><div class="body"></div>`;
     t.querySelector(".body").innerHTML = isErr ? `<p>${inline(text)}</p>` : renderReply(text);
-    messages.appendChild(t);
-    scrollDown();
+    messages.appendChild(t); scrollDown();
   }
-
   function scrollDown() { log.scrollTop = log.scrollHeight; }
 
-  // First-run: ask the user to name their assistant (only once, then remembered).
   function maybeAskName() {
     if (assistantName) return;
-    awaitingName = true;
-    welcome.style.display = "none";
+    awaitingName = true; welcome.style.display = "none";
     addBot("Hi there. Before we begin, what would you like to call me? Pick any name you like.");
     box.focus();
   }
-
   function setName(name) {
     assistantName = name.slice(0, 40);
     localStorage.setItem("dl_assistant_name", assistantName);
-    awaitingName = false;
-    addUser(name);
+    awaitingName = false; addUser(name);
     addBot(`Lovely to meet you. I'm ${assistantName} from now on. Say "start tracking" and I'll begin keeping your day, then ask me about it whenever you like.`);
   }
 
   async function sendMessage(text) {
     if (!text || busy) return;
-    addUser(text);
-    busy = true; send.disabled = true;
-    thinking.classList.add("on"); scrollDown();
+    showChat(); addUser(text);
+    busy = true; send.disabled = true; thinking.classList.add("on"); scrollDown();
     try {
-      const res = await fetch("/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }),
-      });
+      const res = await fetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId }) });
       if (!res.ok) throw new Error("the server returned " + res.status);
       const data = await res.json();
       sessionId = data.session_id;
       addBot(data.reply, false);
+      loadDates();  // a freshly processed day should appear in the journal list
     } catch (err) {
       addBot("Something went wrong: " + err.message + ". Is the app still running?", true);
     } finally {
-      busy = false; send.disabled = false;
-      thinking.classList.remove("on");
-      box.focus();
+      busy = false; send.disabled = false; thinking.classList.remove("on"); box.focus();
     }
   }
+  function handleInput(text) { if (!text) return; if (awaitingName) { setName(text); return; } sendMessage(text); }
 
-  // Route input: the naming answer is captured locally; everything else goes to the server.
-  function handleInput(text) {
-    if (!text) return;
-    if (awaitingName) { setName(text); return; }
-    sendMessage(text);
-  }
-
-  // Composer: auto-grow, Enter to send, Shift+Enter for newline.
   function autogrow() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 160) + "px"; }
   box.addEventListener("input", autogrow);
-  document.getElementById("composer").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const text = box.value.trim();
-    box.value = ""; autogrow();
-    handleInput(text);
-  });
-  box.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("composer").requestSubmit(); }
-  });
+  $("composer").addEventListener("submit", (e) => { e.preventDefault(); const text = box.value.trim(); box.value = ""; autogrow(); handleInput(text); });
+  box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("composer").requestSubmit(); } });
+  $("chips").addEventListener("click", (e) => { const chip = e.target.closest(".chip"); if (chip) handleInput(chip.textContent.trim()); });
 
-  document.getElementById("chips").addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip");
-    if (chip) handleInput(chip.textContent.trim());
-  });
+  // ---------- view switching (chat <-> journal) ----------
+  function showChat() {
+    $("chat-view").classList.add("show"); $("journal-view").classList.remove("show");
+    $("nav-chat").classList.add("active");
+    document.querySelectorAll(".day-item.active").forEach((el) => el.classList.remove("active"));
+    closeDrawer();
+  }
+  function showJournal() {
+    $("journal-view").classList.add("show"); $("chat-view").classList.remove("show");
+    $("nav-chat").classList.remove("active");
+    closeDrawer();
+  }
+  $("nav-chat").addEventListener("click", () => { showChat(); box.focus(); });
+  $("nav-chat-label").textContent = assistantName || "Assistant";
 
-  // ---------- Status pill (clean: connection only, no model/pending) ----------
-  async function refreshHealth() {
-    const dot = document.getElementById("status-dot");
-    const txt = document.getElementById("status-text");
+  // ---------- journal list + pane ----------
+  function friendlyDate(iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - dt) / 86400000);
+    const main = diff === 0 ? "Today" : diff === 1 ? "Yesterday"
+      : dt.toLocaleDateString(undefined, { weekday: "long" });
+    const sub = dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return { main, sub, same: main === sub };
+  }
+
+  async function loadDates() {
     try {
-      await (await fetch("/health")).json();
-      dot.className = "dot ok";
-      txt.textContent = "Connected";
-    } catch {
-      dot.className = "dot down";
-      txt.textContent = "Offline";
+      const data = await (await fetch("/journal/dates")).json();
+      const list = $("day-list");
+      const dates = data.dates || [];
+      if (!dates.length) {
+        list.innerHTML = `<div class="sb-empty">No days yet. Start tracking, then ask "what did I do today?" — your day will be saved here.</div>`;
+        return;
+      }
+      const current = list.querySelector(".day-item.active")?.dataset.date;
+      list.innerHTML = dates.map((d) => {
+        const f = friendlyDate(d);
+        const active = d === current ? " active" : "";
+        return `<button class="nav-item day-item${active}" data-date="${d}" type="button">
+          <span class="n-main"><span class="d-main">${f.main}</span>${f.same ? "" : `<span class="d-sub">${f.sub}</span>`}</span></button>`;
+      }).join("");
+    } catch { /* offline — leave the list as-is */ }
+  }
+
+  $("day-list").addEventListener("click", (e) => {
+    const item = e.target.closest(".day-item");
+    if (item) openDay(item.dataset.date);
+  });
+
+  async function openDay(date) {
+    showJournal();
+    document.querySelectorAll(".day-item").forEach((el) => el.classList.toggle("active", el.dataset.date === date));
+    const page = $("journal-page");
+    page.innerHTML = `<div class="j-empty">Opening…</div>`;
+    try {
+      const day = await (await fetch("/journal/" + encodeURIComponent(date))).json();
+      page.innerHTML = renderJournal(day);
+    } catch (e) {
+      page.innerHTML = `<div class="j-empty">Could not load this day (${escapeHtml(e.message)}).</div>`;
     }
   }
-  refreshHealth();
-  setInterval(refreshHealth, 15000);
 
-  // ---------- First-run setup ----------
-  const backdrop = document.getElementById("setup-backdrop");
-  const invite = document.getElementById("invite");
-  const saveBtn = document.getElementById("save-invite");
-  const setupErr = document.getElementById("setup-err");
+  // Narrative = the prose the Journalist wrote, i.e. the writeup between the H1 and the
+  // first "## " section. Everything factual (timeline, numbers) we render from the blocks.
+  function narrativeFromWriteup(writeup) {
+    if (!writeup) return "";
+    const body = writeup.split(/\n##\s+/)[0];         // drop Timeline / By the numbers
+    return body.replace(/^#\s+.*\n?/, "").trim();     // drop the H1 title line
+  }
 
+  function renderJournal(day) {
+    const blocks = day.blocks || [];
+    const f = friendlyDate(day.date);
+    const total = blocks.reduce((s, b) => s + (b.duration_seconds || 0), 0);
+    if (!blocks.length && !day.writeup) {
+      return `<div class="j-head"><div class="j-eyebrow">Journal</div><h1 class="j-date">${f.main}${f.same ? "" : " · " + f.sub}</h1></div>
+        <div class="j-empty">Nothing recorded for this day yet.</div>`;
+    }
+    const narrative = narrativeFromWriteup(day.writeup);
+    const rows = blocks.map((b, idx) => {
+      const last = idx === blocks.length - 1 ? "" : "";
+      const cat = b.category ? `<span>${escapeHtml(b.category)}</span>` : "";
+      return `<div class="tl-row">
+        <div class="tl-time">${hhmm(b.start)}<small>${hhmm(b.end)}</small></div>
+        <div class="tl-rail"><div class="tl-node"></div></div>
+        <div class="tl-label"><span class="lab">${escapeHtml(b.label)}</span>
+          <div class="meta"><span class="app">${escapeHtml(b.app_name)}</span>${cat}<span>${fmtDur(b.duration_seconds)}</span></div>
+        </div></div>`;
+    }).join("");
+
+    const cats = Object.entries(day.time_by_category || {}).sort((a, b) => b[1] - a[1]);
+    const apps = Object.entries(day.time_by_app || {}).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const statRow = (k, v) => `<div class="stat-row"><span class="k">${escapeHtml(k)}</span><span class="v">${v}</span></div>`;
+    const statsHtml = `<div class="stats">
+      ${statRow("Total tracked", fmtDur(total))}
+      ${cats.length ? statRow("By category", cats.map(([k, v]) => `${escapeHtml(k)} ${fmtDur(v)}`).join(", ")) : ""}
+      ${apps.length ? statRow("Top apps", apps.map(([k, v]) => `${escapeHtml(k)} ${fmtDur(v)}`).join(", ")) : ""}
+    </div>`;
+
+    return `<div class="j-head">
+        <div class="j-eyebrow">Journal</div>
+        <h1 class="j-date">${f.main}${f.same ? "" : " · " + f.sub}</h1>
+        <p class="j-total">${fmtDur(total)} tracked · ${blocks.length} ${blocks.length === 1 ? "activity" : "activities"}</p>
+      </div>
+      ${narrative ? `<p class="j-narrative">${inline(narrative).replace(/\n/g, " ")}</p>` : ""}
+      ${rows ? `<div class="section-h">Timeline</div><div class="timeline">${rows}</div>` : ""}
+      <div class="section-h">By the numbers</div>${statsHtml}`;
+  }
+
+  // ---------- mobile drawer ----------
+  function openDrawer() { $("sidebar").classList.add("open"); $("sb-backdrop").classList.add("on"); }
+  function closeDrawer() { $("sidebar").classList.remove("open"); $("sb-backdrop").classList.remove("on"); }
+  $("hamburger").addEventListener("click", openDrawer);
+  $("sb-backdrop").addEventListener("click", closeDrawer);
+
+  // ---------- status ----------
+  async function refreshHealth() {
+    const dot = $("status-dot"), txt = $("status-text");
+    try { await (await fetch("/health")).json(); dot.className = "dot ok"; txt.textContent = "Connected"; }
+    catch { dot.className = "dot down"; txt.textContent = "Offline"; }
+  }
+  refreshHealth(); setInterval(refreshHealth, 15000);
+
+  // ---------- first-run setup ----------
+  const backdrop = $("setup-backdrop"), invite = $("invite"), saveBtn = $("save-invite"), setupErr = $("setup-err");
   async function saveInvite() {
     const token = invite.value.trim();
     if (!token) { invite.focus(); return; }
     saveBtn.disabled = true; setupErr.classList.remove("on");
     try {
-      const res = await fetch("/setup", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invite_token: token }),
-      });
+      const res = await fetch("/setup", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invite_token: token }) });
       if (!res.ok) throw new Error();
-      backdrop.classList.remove("on");
-      maybeAskName();
-      box.focus();
-    } catch {
-      setupErr.classList.add("on");
-    } finally {
-      saveBtn.disabled = false;
-    }
+      backdrop.classList.remove("on"); maybeAskName(); box.focus();
+    } catch { setupErr.classList.add("on"); } finally { saveBtn.disabled = false; }
   }
   saveBtn.addEventListener("click", saveInvite);
   invite.addEventListener("keydown", (e) => { if (e.key === "Enter") saveInvite(); });
 
-  // Boot: check whether an invite code is set. If yes (or no /setup on dev), go
-  // straight to naming; if not, the invite modal handles it, then naming follows.
+  // ---------- boot ----------
   async function boot() {
+    loadDates();
     try {
       const res = await fetch("/setup");
-      if (res.ok) {
-        const s = await res.json();
-        if (!s.configured) { backdrop.classList.add("on"); invite.focus(); return; }
-      }
-    } catch { /* no /setup endpoint on dev — fine */ }
+      if (res.ok) { const s = await res.json(); if (!s.configured) { backdrop.classList.add("on"); invite.focus(); return; } }
+    } catch { /* no /setup on dev — fine */ }
     maybeAskName();
   }
   boot();

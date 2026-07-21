@@ -47,6 +47,19 @@ if [[ ! -x "$BIN" ]]; then
     exit 1
 fi
 
+echo "==> Ad-hoc code-signing the bundle (stable identity)"
+# PyInstaller already ad-hoc signs, but we re-sign the whole bundle deeply and deterministically
+# so every launch presents the SAME code identity to macOS. That is what lets the one-time
+# Screen Recording grant STICK across launches for an unsigned (no-$99-Developer-ID) app —
+# combined with in-process capture (the app itself records, not a separate child) and the user
+# keeping the app in /Applications with quarantine removed. It does NOT remove the first-open
+# Gatekeeper prompt (that needs a paid Developer ID + notarization).
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP" && echo "    signature OK ($(codesign -dv "$APP" 2>&1 | grep -o 'Signature=adhoc'))"
+# Strip quarantine locally so our own smoke run doesn't get App-Translocated to a random path
+# (which would itself defeat TCC persistence during testing).
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+
 echo "==> Smoke-testing the frozen app (boots server, checks /health)"
 # Point at a throwaway home so the smoke run never touches the real journal.
 SMOKE_HOME="$(mktemp -d)"

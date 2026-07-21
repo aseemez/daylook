@@ -51,7 +51,10 @@ def test_pipeline_processes_and_persists(tmp_path, monkeypatch):
     # produced a dated result with blocks
     assert result["date"] == "2026-07-05"
     assert result["num_events"] == 30
-    assert result["num_blocks"] >= 3
+    # aggregate_day now de-fragments blocks (analyst.merge_blocks) so a day reads as a few
+    # meaningful activities, not a per-batch log — here the stub's same-category blocks collapse
+    # by app. Still must be more than one block (eval criterion 1: time-bucketed, not prose).
+    assert result["num_blocks"] >= 2
     assert result["writeup"].startswith("# Journal — 2026-07-05")
 
     # refinements were threaded into the journalist

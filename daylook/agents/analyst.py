@@ -34,7 +34,7 @@ from daylook.events import CaptureEvent, EventBatch
 from daylook.imaging import prepare_image
 
 # Bump when the prompt/schema changes so stale cache entries are naturally bypassed.
-PROMPT_VERSION = "analyst-v2"  # v2: heartbeat events + keyframe image selection
+PROMPT_VERSION = "analyst-v3"  # v3: short labels + fewer/larger blocks (v2: heartbeats+keyframes)
 
 CATEGORIES = ["coding", "research", "communication", "review", "meeting", "writing", "break", "other"]
 
@@ -235,12 +235,17 @@ _INSTRUCTION = (
     "screen-capture events in chronological order. Each event has an app name, a window "
     "title, a timestamp, and a screenshot of what was on screen.\n\n"
     "Group CONSECUTIVE events that belong to the same real activity/context into blocks. A "
-    "block is one coherent thing the person was doing, e.g. 'Debugging JWT token rotation in "
-    "Cursor' or 'Researching key rotation on Stack Overflow and MDN'.\n\n"
+    "block is one coherent thing the person was doing.\n\n"
+    "Think in terms of a readable daily journal, not a minute-by-minute log. Prefer FEWER, "
+    "LARGER blocks: a stretch of related work is ONE block even if the person dipped between a "
+    "couple of apps to do it. Only start a new block at a genuine change of what they were "
+    "actually doing, not at every window switch.\n\n"
     "Rules:\n"
     "- Only group consecutive events. Never reorder.\n"
     "- Every event must belong to exactly one block. Reference events by their exact event_id.\n"
-    "- Start a new block at a genuine context switch; otherwise keep related events together.\n"
+    "- Keep each label SHORT — a few plain words naming the activity, e.g. 'Debugging auth "
+    "flow', 'JWT rotation research', 'YouTube tutorial', 'Email triage'. Never write a full "
+    "sentence, and never mention this journal, the tracking, or the app you're labelling for.\n"
     "- Use the screenshots to make the label specific about what was actually happening, not "
     "just the app name.\n"
     "- Events marked kind=heartbeat mean the person stayed in the SAME window (captured "
@@ -350,20 +355,98 @@ def analyze_batches(
     ]
 
 
+# --- Block merging (deterministic de-fragmentation for a readable journal) -------------
+
+def _merge_two(a: dict, b: dict) -> dict:
+    """Fuse block ``b`` into ``a`` (a precedes b). Keeps the longer block's identity so a tiny
+    blip absorbed into a big session takes the session's label/app, not the other way round.
+    Times and source ids are recomputed from the real data, so the anti-hallucination invariant
+    (source_event_ids ⊆ captured events) survives the merge."""
+    lead = a if a["duration_seconds"] >= b["duration_seconds"] else b
+    return {
+        "start": a["start"],
+        "end": b["end"],
+        "duration_seconds": a["duration_seconds"] + b["duration_seconds"],
+        "label": lead["label"],
+        "category": lead["category"],
+        "app_name": lead["app_name"],
+        "source_event_ids": list(a["source_event_ids"]) + list(b["source_event_ids"]),
+    }
+
+
+def merge_blocks(blocks: list[dict], min_seconds: int | None = None) -> list[dict]:
+    """Collapse a fragmented block list into a few meaningful ones — the difference between a
+    minute-by-minute log and a journal. Two passes, repeated until stable:
+
+      1. Adjacent blocks with the SAME app and category are one activity — merge them.
+      2. Any block still shorter than ``min_seconds`` is noise on its own — fold it into its
+         larger neighbour (a 40s Safari glance mid-Terminal session joins the session).
+
+    Purely a presentation transform over already-derived blocks; it never invents data and every
+    surviving block still lists the real event ids it came from.
+    """
+    cutoff = min_seconds if min_seconds is not None else config.MIN_BLOCK_SECONDS
+    blocks = [dict(b) for b in blocks]
+
+    def one_pass(bs: list[dict]) -> tuple[list[dict], bool]:
+        out: list[dict] = []
+        changed = False
+        for b in bs:
+            if out and out[-1]["app_name"] == b["app_name"] and out[-1]["category"] == b["category"]:
+                out[-1] = _merge_two(out[-1], b)
+                changed = True
+            else:
+                out.append(b)
+        return out, changed
+
+    # Pass 1: repeatedly merge same app+category neighbours.
+    changed = True
+    while changed and len(blocks) > 1:
+        blocks, changed = one_pass(blocks)
+
+    # Pass 2: fold sub-cutoff blocks into whichever neighbour is longer, then re-merge.
+    changed = True
+    while changed and len(blocks) > 1:
+        changed = False
+        for i, b in enumerate(blocks):
+            if b["duration_seconds"] >= cutoff:
+                continue
+            prev, nxt = (blocks[i - 1] if i > 0 else None), (blocks[i + 1] if i + 1 < len(blocks) else None)
+            if prev is None and nxt is None:
+                continue  # a lone short day: leave it, it's all we have
+            # Fold into the longer neighbour so the dominant activity keeps its identity.
+            into_prev = prev is not None and (nxt is None or prev["duration_seconds"] >= nxt["duration_seconds"])
+            if into_prev:
+                blocks[i - 1] = _merge_two(prev, b)
+            else:
+                blocks[i + 1] = _merge_two(b, nxt)
+            del blocks[i]
+            changed = True
+            break
+        if not changed:
+            break
+        blocks, _ = one_pass(blocks)
+    return blocks
+
+
 # --- Day-level aggregation ------------------------------------------------------------
 
 def aggregate_day(analyses: list[BatchAnalysis]) -> dict:
-    """Combine batch analyses into a day summary: all blocks + time distributions + ranking."""
-    blocks = [b for a in analyses for b in a.blocks]
+    """Combine batch analyses into a day summary: all blocks + time distributions + ranking.
+
+    Blocks are de-fragmented (see :func:`merge_blocks`) so the day reads as a handful of
+    meaningful activities rather than a minute-by-minute log."""
+    raw = [b.to_dict() for a in analyses for b in a.blocks]
+    merged = merge_blocks(raw)
     by_cat: Counter[str] = Counter()
     by_app: Counter[str] = Counter()
-    for b in blocks:
-        by_cat[b.category] += b.duration_seconds
-        by_app[b.app_name] += b.duration_seconds
-    total = sum(b.duration_seconds for b in blocks)
+    for b in merged:
+        by_cat[b["category"]] += b["duration_seconds"]
+        by_app[b["app_name"]] += b["duration_seconds"]
+    total = sum(b["duration_seconds"] for b in merged)
     return {
         "date": analyses[0].date if analyses else None,
-        "blocks": [b.to_dict() for b in blocks],
+        "blocks": merged,
         "total_tracked_seconds": total,
         "time_by_category": dict(by_cat),
         "time_by_app": dict(by_app),

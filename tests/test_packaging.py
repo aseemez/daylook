@@ -1,17 +1,15 @@
 """Tests for the packaged-app seams that can't be caught by importing normally.
 
-These lock in the two frozen-app behaviors that have no effect in a normal install (so a refactor
-can't silently break the .app): the ``--capture`` re-launch command and the argv cleanup.
+The frozen bundle's ``entry.py`` still exposes a ``--capture`` CLI role (handy for manual/CLI
+capture), even though the running app now captures in-process on a thread rather than
+re-launching itself. These lock in that entry routing and the macOS argv cleanup.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import pathlib
-import subprocess
 import sys
-
-from daylook.agents.root import RootAgent
 
 
 def _load_entry():
@@ -24,45 +22,20 @@ def _load_entry():
     return module
 
 
-def test_start_capture_uses_module_form_when_not_frozen(tmp_path, monkeypatch):
-    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
-    monkeypatch.delattr(sys, "frozen", raising=False)
-    captured = {}
+def test_entry_routes_capture_flag_to_real_capture(monkeypatch):
+    """`Daylook --capture ...` runs the capture CLI, forwarding the remaining args."""
+    entry = _load_entry()
+    seen = {}
 
-    class _FakePopen:
-        def __init__(self, cmd, **kw):
-            captured["cmd"] = cmd
-            self.pid = 4321
+    def fake_main():
+        seen["argv"] = list(sys.argv)
 
-        def poll(self):
-            return None
-
-    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
-    RootAgent().start_capture_process(dry_run=True)
-    assert captured["cmd"][1:3] == ["-m", "daylook.capture_script.real_capture"]
-    assert "--dry-run" in captured["cmd"]
-
-
-def test_start_capture_uses_capture_flag_when_frozen(tmp_path, monkeypatch):
-    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    captured = {}
-
-    class _FakePopen:
-        def __init__(self, cmd, **kw):
-            captured["cmd"] = cmd
-            self.pid = 4321
-
-        def poll(self):
-            return None
-
-    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
-    RootAgent().start_capture_process(minutes=5, dry_run=True)
-    # frozen: re-launch the bundle itself with the --capture marker, no `-m module`
-    assert captured["cmd"][0] == sys.executable
-    assert captured["cmd"][1] == "--capture"
-    assert "-m" not in captured["cmd"]
-    assert "--minutes" in captured["cmd"] and "5" in captured["cmd"]
+    monkeypatch.setattr("daylook.capture_script.real_capture.main", fake_main)
+    monkeypatch.setattr(sys, "argv", ["Daylook", "--capture", "--dry-run"])
+    rc = entry.main()
+    assert rc == 0
+    assert "--dry-run" in seen["argv"]
+    assert "--capture" not in seen["argv"]  # the marker is consumed, not forwarded
 
 
 def test_entry_clean_argv_drops_process_serial_number():

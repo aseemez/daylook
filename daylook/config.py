@@ -97,6 +97,13 @@ MAX_IMAGES_PER_BATCH = 12         # screenshots actually sent per vision call (k
 # long idle gap or the final event of the day can't inflate a block's duration.
 MAX_EVENT_DWELL_SECONDS = 15 * 60
 
+# A readable journal groups the day into a handful of meaningful blocks, not a minute-by-minute
+# log. Blocks shorter than this get folded into an adjacent block (a 40-second glance at Safari
+# in the middle of a Terminal session shouldn't be its own timeline row). See
+# analyst.merge_blocks — this is presentation granularity, not a change to captured data:
+# folded events keep their source_event_ids, so every block still traces back to real capture.
+MIN_BLOCK_SECONDS = 120
+
 
 def vertex_configured() -> bool:
     """True when the Vertex routing env vars are present (legacy/relay-server path)."""

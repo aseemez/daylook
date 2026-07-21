@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from daylook import config, settings
 from daylook.agents.capture import CaptureAgent
+from daylook.agents.memory import MemoryAgent
 from daylook.agents.root import RootAgent
 
 # Resolved relative to this module so it works both from a normal install and
@@ -38,6 +39,22 @@ def get_root() -> RootAgent:
     if _root is None:
         _root = RootAgent()
     return _root
+
+
+_memory: MemoryAgent | None = None
+
+
+def get_memory() -> MemoryAgent:
+    """Lazy read-only Memory handle for the journal endpoints.
+
+    Deliberately separate from the Root Agent: the sidebar just needs to *read* stored days
+    (no model, no session), so it should not spin up the whole orchestration graph. Same clean
+    Memory interface, so this stays true if Memory is ever split into its own service.
+    """
+    global _memory
+    if _memory is None:
+        _memory = MemoryAgent()
+    return _memory
 
 
 class ChatRequest(BaseModel):
@@ -93,6 +110,31 @@ def post_setup(req: SetupRequest) -> dict:
     data = settings.save(patch)
     settings.apply_to_env(data)
     return {"configured": settings.is_configured(data), "mode": data.get("api_key_mode")}
+
+
+@app.get("/journal/dates")
+def journal_dates(memory: MemoryAgent = Depends(get_memory)) -> dict:
+    """Every date that has a saved journal, newest first — the sidebar's day list."""
+    return {"dates": sorted(memory.available_dates(), reverse=True)}
+
+
+@app.get("/journal/{date}")
+def journal_day(date: str, memory: MemoryAgent = Depends(get_memory)) -> dict:
+    """One day's stored journal for the journal pane: writeup + blocks + distributions.
+
+    Returns 200 with ``writeup: null`` (rather than 404) when the day isn't stored yet, so the
+    UI can render an empty-state without treating it as an error.
+    """
+    day = memory.get_journal(date)
+    store = memory.store
+    return {
+        "date": date,
+        "writeup": day.get("writeup") if day else None,
+        "created_at": day.get("created_at") if day else None,
+        "blocks": store.get_blocks(date),
+        "time_by_category": store.time_by_category(date),
+        "time_by_app": store.time_by_app(date),
+    }
 
 
 @app.get("/health")

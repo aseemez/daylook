@@ -18,9 +18,7 @@ never nests inside the Root's own event loop.
 from __future__ import annotations
 
 import asyncio
-import signal
-import subprocess
-import sys
+import threading
 import uuid
 from datetime import date as date_cls
 from pathlib import Path
@@ -45,10 +43,14 @@ class RootAgent:
         self.memory = memory if memory is not None else MemoryAgent()
         self.pipeline = pipeline if pipeline is not None else Pipeline(self.memory)
         self.pending_dir = pending_dir
-        # Handle to a background real-capture subprocess, if one is running (see
-        # start_capture_process / stop_capture_process). None when idle.
-        self._capture_proc: subprocess.Popen | None = None
-        self._capture_log = None
+        # In-process capture: a background thread runs the real-capture loop *inside this app
+        # process* (see start_capture_process / stop_capture_process), stopped cooperatively via
+        # the Event. Running it here — rather than spawning a child — means the screen recording
+        # is done by the same process the user already granted macOS Screen Recording to, so
+        # macOS doesn't treat capture as a new client and re-prompt on every launch. None/idle
+        # until a capture is running.
+        self._capture_thread: threading.Thread | None = None
+        self._capture_stop: threading.Event | None = None
         self._runner = self._build_runner()
 
     # --- tools (closures over self) ---
@@ -159,39 +161,51 @@ class RootAgent:
 
     # --- real-capture process control (drives the "dumb" capture layer as a subprocess) ---
 
+    def _capture_running(self) -> bool:
+        return self._capture_thread is not None and self._capture_thread.is_alive()
+
     def start_capture_process(self, minutes: int = 0, dry_run: bool = False) -> dict:
-        """Spawn the real macOS capture script in the background and track its process.
+        """Start the real macOS capture loop on a background thread **in this process**.
 
         **Consent-gated:** unless ``dry_run``, this records the user's actual screen. Events are
         written to ``pending/`` exactly as the terminal command would. ``minutes<=0`` runs until
         :meth:`stop_capture_process` is called; a positive value auto-stops after that long.
         ``dry_run`` detects window switches but takes no screenshots — safe to run without
         capturing screen content (used by the tests). Idempotent: a second start while one is
-        already running is a no-op that reports the existing pid.
-        """
-        if self._capture_proc is not None and self._capture_proc.poll() is None:
-            return {"status": "already_running", "pid": self._capture_proc.pid}
+        already running is a no-op.
 
-        # In a normal install we re-invoke the interpreter with ``-m``. In a frozen (PyInstaller)
-        # bundle there's no ``-m`` and ``sys.executable`` is the app itself, so we re-launch the
-        # bundle with a ``--capture`` marker that packaging/entry.py routes to real_capture.main.
-        if getattr(sys, "frozen", False):
-            cmd = [sys.executable, "--capture"]
-        else:
-            cmd = [sys.executable, "-m", "daylook.capture_script.real_capture"]
-        if minutes and minutes > 0:
-            cmd += ["--minutes", str(minutes)]
-        if dry_run:
-            cmd += ["--dry-run"]
+        Why in-thread rather than a subprocess: macOS grants Screen Recording per *process
+        identity*. The app already holds that grant; a spawned child looks like a brand-new
+        capture client to macOS and gets re-prompted every launch. Recording from inside the
+        granted app process is what makes the permission stick.
+        """
+        if self._capture_running():
+            return {"status": "already_running"}
+
+        from daylook.capture_script import real_capture
 
         config.ensure_dirs()
-        # Redirect the child's stdout/stderr to a log so it never blocks on a full pipe and the
-        # user can see what was captured.
-        self._capture_log = open(config.home() / "capture.log", "a")
-        self._capture_proc = subprocess.Popen(cmd, stdout=self._capture_log, stderr=subprocess.STDOUT)
+        stop = threading.Event()
+        duration = (minutes * 60) if (minutes and minutes > 0) else None
+
+        def _loop() -> None:
+            try:
+                real_capture.run(
+                    pending=self.pending_dir,
+                    dry_run=dry_run,
+                    duration_seconds=duration,
+                    stop_event=stop,
+                )
+            except Exception as e:  # never let a capture error take down the app
+                from daylook.observability import observe
+                with observe("root", "capture_error", str(e)[:120]):
+                    pass
+
+        self._capture_stop = stop
+        self._capture_thread = threading.Thread(target=_loop, name="daylook-capture", daemon=True)
+        self._capture_thread.start()
         return {
             "status": "started",
-            "pid": self._capture_proc.pid,
             "minutes": minutes or None,
             "dry_run": dry_run,
             "note": "Screen capture is running in the background. Events land in pending/. "
@@ -199,40 +213,26 @@ class RootAgent:
         }
 
     def stop_capture_process(self) -> dict:
-        """Stop a running capture subprocess. Idempotent: returns ``not_running`` if idle.
+        """Stop the in-process capture thread. Idempotent: ``not_running`` if idle.
 
-        Sends SIGINT first so ``real_capture`` runs its clean-exit path (prints a summary);
-        escalates to terminate/kill only if it doesn't stop promptly. Captured events are
-        written incrementally, so a hard stop never loses already-recorded events.
+        Sets the cooperative stop Event and joins; the loop exits within one poll interval,
+        after finishing any in-flight write, so no already-captured event is lost.
         """
-        proc = self._capture_proc
-        if proc is None or proc.poll() is not None:
-            self._capture_proc = None
+        if not self._capture_running():
+            self._capture_thread = None
+            self._capture_stop = None
             return {"status": "not_running"}
 
-        pid = proc.pid
-        proc.send_signal(signal.SIGINT)
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        self._capture_proc = None
-        if self._capture_log is not None:
-            try:
-                self._capture_log.close()
-            except Exception:
-                pass
-            self._capture_log = None
-        return {"status": "stopped", "pid": pid}
+        if self._capture_stop is not None:
+            self._capture_stop.set()
+        self._capture_thread.join(timeout=10)
+        self._capture_thread = None
+        self._capture_stop = None
+        return {"status": "stopped"}
 
     def capture_status(self) -> dict:
         """Whether a background capture is currently running."""
-        running = self._capture_proc is not None and self._capture_proc.poll() is None
-        return {"running": running, "pid": self._capture_proc.pid if running else None}
+        return {"running": self._capture_running()}
 
     def build_llm_agent(self):
         """Return a fresh underlying ``LlmAgent`` (tools included) for an external runner.
