@@ -24,7 +24,7 @@ def test_index_serves_chat_page():
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "Daylook" in r.text
+    assert "DayLook" in r.text
 
 
 def test_health(tmp_path, monkeypatch):
