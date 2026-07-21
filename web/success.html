@@ -3,57 +3,91 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Welcome to Daylook</title>
+<title>Welcome to DayLook</title>
 <style>
   :root {
-    --bg: #f6f5f1; --surface: #ffffff; --ink: #23221f; --ink-2: #56534c; --muted: #928e85;
-    --line: #e7e4dd; --accent: #3f6b4d; --accent-2: #57906a; --accent-soft: #e9f0ea;
-    --danger: #b3564f;
-    --shadow: 0 1px 2px rgba(30,28,24,.05), 0 12px 32px rgba(30,28,24,.08);
+    --bg: #FBF4E9; --surface: #FFFCF6; --surface-2: #FAF2E4;
+    --ink: #2C2118; --ink-2: #6E5F50; --muted: #A2917E;
+    --line: #ECE0CE; --honey: #DB8B36; --honey-2: #F0AC5B; --clay: #C0633A;
+    --peach: #F6C9A0; --rose: #E7A488; --soft: #FBEEDA; --danger: #C0563F;
+    --shadow: 0 1px 2px rgba(74,48,20,.05), 0 16px 38px rgba(74,48,20,.10);
+    --spring: cubic-bezier(.22,1,.36,1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161513; --surface: #201e1c; --ink: #ece9e2; --ink-2: #bcb8af; --muted: #8b877e;
-      --line: #322f2b; --accent: #6f9a78; --accent-2: #8ab894; --accent-soft: #232c25;
-      --danger: #d98a83;
-      --shadow: 0 1px 2px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.4);
+      --bg: #191310; --surface: #241C15; --surface-2: #2B2118;
+      --ink: #F1E7D8; --ink-2: #C4B5A2; --muted: #907F6D;
+      --line: #382A1D; --honey: #EBA557; --honey-2: #F7C079; --clay: #DB8B5C;
+      --peach: #4C3826; --rose: #C98363; --soft: #2C2015; --danger: #E0947F;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 18px 46px rgba(0,0,0,.5);
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 620px; margin: 0 auto; padding: 60px 22px; }
-  .brand { font-weight: 700; font-size: 15px; color: var(--ink-2); margin-bottom: 28px; }
-  .brand span { color: var(--accent); }
-  h1 { letter-spacing: -.5px; font-size: clamp(28px, 6vw, 38px); margin: 0 0 8px; }
-  .sub { color: var(--ink-2); margin: 0 0 28px; }
-  .code-card { background: var(--surface); border: 1.5px solid var(--accent); border-radius: 16px;
-               padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 28px; }
-  .code-card label { font-size: 12.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
-  .code-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
-  #token { flex: 1; font: 600 20px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px;
-           background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; word-break: break-all; }
-  .copy { border: 0; cursor: pointer; background: var(--accent); color: #fff; font: 600 14px inherit;
-          font-family: inherit; padding: 12px 18px; border-radius: 10px; }
-  .copy:hover { background: var(--accent-2); }
-  ol.steps { padding-left: 0; margin: 0; list-style: none; counter-reset: n; }
-  ol.steps li { counter-increment: n; display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
-  ol.steps li::before { content: counter(n); flex: 0 0 28px; height: 28px; border-radius: 50%;
-    background: var(--accent-soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; font-size: 14px; }
-  ol.steps b { display: block; }
-  ol.steps small { color: var(--muted); }
-  .btn { display: inline-block; text-decoration: none; background: var(--accent); color: #fff; font-weight: 600;
-         padding: 15px 26px; border-radius: 12px; box-shadow: var(--shadow); margin-top: 26px; }
-  .btn:hover { background: var(--accent-2); }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); overflow-x: hidden;
+    font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  h1 { letter-spacing: -.02em; line-height: 1.1; }
+  .aurora { position: fixed; inset: -20% -10%; z-index: 0; pointer-events: none; overflow: hidden; }
+  .aurora span { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .5; }
+  .aurora .a { width: 46vw; height: 46vw; left: -6vw; top: -10vw; background: radial-gradient(circle, var(--honey-2), transparent 68%); }
+  .aurora .b { width: 40vw; height: 40vw; right: -8vw; top: 10vh; background: radial-gradient(circle, var(--rose), transparent 66%); opacity: .4; }
+  @media (prefers-color-scheme: dark) { .aurora span { opacity: .28 !important; } }
+  .wrap { position: relative; z-index: 1; max-width: 600px; margin: 0 auto; padding: 64px 24px; }
+  .wrap > * { animation: rise .6s var(--spring) both; }
+  .wrap > *:nth-child(3) { animation-delay: .08s; } .wrap > *:nth-child(4) { animation-delay: .16s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+  .brand { display: inline-flex; align-items: center; gap: 11px; margin-bottom: 26px; }
+  .mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+    background: linear-gradient(145deg, var(--honey-2), var(--clay));
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--clay) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.35); }
+  .mark svg { width: 22px; height: 22px; }
+  .brand b { font-size: 18px; font-weight: 700; } .brand b span { color: var(--honey); }
+
+  h1 { font-size: clamp(30px, 6.4vw, 42px); margin: 0 0 8px; font-weight: 760; }
+  .sub { color: var(--ink-2); margin: 0 0 30px; font-size: 17px; }
+  .code-card { position: relative; overflow: hidden; border-radius: 18px; padding: 22px;
+    background: color-mix(in srgb, var(--soft) 70%, transparent); border: 1.5px solid color-mix(in srgb, var(--honey) 45%, var(--line));
+    box-shadow: var(--shadow); margin-bottom: 30px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .code-card label { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--clay); }
+  .code-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  #token { flex: 1; font: 700 21px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px;
+    background: color-mix(in srgb, var(--honey) 14%, transparent); border-radius: 12px; padding: 13px 15px; word-break: break-all; }
+  .copy { border: 0; cursor: pointer; background: linear-gradient(145deg, var(--honey-2), var(--honey)); color: #3a230c;
+    font: 700 14px inherit; font-family: inherit; padding: 13px 20px; border-radius: 12px; transition: transform .16s var(--spring); }
+  @media (prefers-color-scheme: dark) { .copy { color: #241408; } }
+  .copy:hover { transform: translateY(-2px); }
+
+  ol.steps { padding-left: 0; margin: 0 0 30px; list-style: none; counter-reset: n; }
+  ol.steps li { counter-increment: n; display: flex; gap: 15px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+  ol.steps li:last-child { border-bottom: 0; }
+  ol.steps li::before { content: counter(n); flex: 0 0 30px; height: 30px; border-radius: 50%;
+    background: linear-gradient(145deg, var(--honey-2), var(--clay)); color: #fff; font-weight: 700; display: grid; place-items: center; font-size: 14px;
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--clay) 35%, transparent); }
+  ol.steps b { display: block; } ol.steps small { color: var(--muted); }
+
+  .btn { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 9px; text-decoration: none;
+    background: linear-gradient(145deg, var(--honey-2), var(--honey)); color: #3a230c; font-weight: 650; font-size: 16.5px;
+    padding: 16px 28px; border-radius: 14px; box-shadow: 0 8px 22px color-mix(in srgb, var(--honey) 42%, transparent), inset 0 1px 0 rgba(255,255,255,.4);
+    transition: transform .18s var(--spring); }
+  @media (prefers-color-scheme: dark) { .btn { color: #241408; } }
+  .btn:hover { transform: translateY(-2px); }
+  .btn svg { width: 18px; height: 18px; }
+  .fine { color: var(--muted); font-size: 12.5px; margin-top: 26px; }
   .err { color: var(--danger); }
-  .fine { color: var(--muted); font-size: 12.5px; margin-top: 24px; }
 </style>
 </head>
 <body>
+<div class="aurora" aria-hidden="true"><span class="a"></span><span class="b"></span></div>
 <div class="wrap">
-  <div class="brand">context<span>line</span></div>
-  <h1 id="headline">You're in. 🎉</h1>
-  <p class="sub" id="subline">Here's your personal invite code — the only thing the app will ever ask you for.</p>
+  <div class="brand"><span class="mark" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4.4" fill="#fff" stroke="none"/>
+      <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>
+    </svg></span><b>Day<span>Look</span></b></div>
+
+  <h1 id="headline">You're in. Welcome.</h1>
+  <p class="sub" id="subline">Here's your personal invite code, the only thing the app will ever ask you for.</p>
 
   <div class="code-card" id="code-card" style="display:none">
     <label>Your invite code</label>
@@ -64,14 +98,17 @@
   </div>
 
   <ol class="steps">
-    <li><div><b>Download Daylook for Mac</b><small>Apple Silicon · drag it into Applications</small></div></li>
-    <li><div><b>Open it</b><small>if macOS objects: System Settings → Privacy &amp; Security → "Open Anyway" (one time)</small></div></li>
-    <li><div><b>Paste your invite code</b><small>into the setup box that appears in your browser</small></div></li>
-    <li><div><b>Say "start tracking"</b><small>grant Screen Recording when macOS asks — from then on, your day writes itself</small></div></li>
+    <li><div><b>Download DayLook for Mac</b><small>Apple Silicon. Drag it into Applications.</small></div></li>
+    <li><div><b>Open it</b><small>If macOS objects: System Settings, Privacy &amp; Security, then "Open Anyway" (one time).</small></div></li>
+    <li><div><b>Paste your invite code</b><small>into the setup box that appears in your browser.</small></div></li>
+    <li><div><b>Name your assistant and say "start tracking"</b><small>Grant Screen Recording when macOS asks. From then on, your day writes itself.</small></div></li>
   </ol>
 
-  <a class="btn" href="https://github.com/aseemez/daylook-dist/releases/latest/download/Daylook.dmg">Download for Mac ↓</a>
-  <p class="fine">Everything Daylook records stays on your Mac. Tonight, ask it: <i>"what did I do today?"</i></p>
+  <a class="btn" href="https://github.com/aseemez/daylook-dist/releases/latest/download/Daylook.dmg">
+    Download for Mac
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v12M6 12l6 6 6-6"/></svg>
+  </a>
+  <p class="fine">Everything DayLook records stays on your Mac. Tonight, ask it: <i>"what did I do today?"</i></p>
 </div>
 
 <script>
@@ -80,7 +117,7 @@
     const tokenEl = document.getElementById('token');
     const card = document.getElementById('code-card');
     if (!id) {
-      document.getElementById('headline').textContent = 'Hmm — no checkout found.';
+      document.getElementById('headline').textContent = 'Hmm, no checkout found.';
       document.getElementById('subline').innerHTML =
         '<span class="err">This page only works right after a purchase. <a href="/">Back to start</a>.</span>';
       return;
@@ -95,11 +132,11 @@
       tokenEl.textContent = '—';
       document.getElementById('subline').innerHTML =
         '<span class="err">Could not verify the payment (' + e.message +
-        '). If you were charged, reply to your receipt email and you\'ll get a code personally.</span>';
+        '). If you were charged, reply to your receipt email and you will get a code personally.</span>';
     }
     document.getElementById('copy').onclick = async () => {
       await navigator.clipboard.writeText(tokenEl.textContent);
-      document.getElementById('copy').textContent = 'Copied ✓';
+      document.getElementById('copy').textContent = 'Copied';
     };
   })();
 </script>

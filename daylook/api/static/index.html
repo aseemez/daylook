@@ -1,100 +1,101 @@
 <!doctype html>
 <!--
-  Daylook chat UI — one self-contained file on purpose: no CDN, no build
+  DayLook chat UI — one self-contained file on purpose: no CDN, no build
   step, works offline, and PyInstaller ships it as plain package data. Talks to
   the same-origin FastAPI endpoints:
-    GET  /health  -> status pill (model, pending events)
+    GET  /health  -> connection status
     GET  /setup   -> is an invite code configured? (may not exist on dev)
     POST /setup   -> save invite code
     POST /chat    -> {"message","session_id"} -> {"reply","session_id"}
 
-  The assistant's daily writeup comes back as light markdown (a "# Work journal"
-  title, a narrative paragraph, a "## Timeline" list of "HH:MM–HH:MM — label
-  (app, Nm)" lines, and a "## By the numbers" stat list). renderReply() below
-  turns that into a real visual timeline instead of a wall of text; anything
-  that isn't a writeup (e.g. "started tracking") falls back to plain prose.
+  The user names the assistant on first run (stored in localStorage); that name
+  labels every reply. The assistant's daily writeup comes back as light markdown
+  and renderReply() turns it into a visual timeline.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Daylook</title>
+<title>DayLook</title>
 <style>
+  /* Warm "golden hour at home" palette: honey + terracotta on cream. */
   :root {
-    --bg: #f6f5f1; --surface: #ffffff; --surface-2: #fbfaf7;
-    --ink: #23221f; --ink-2: #56534c; --muted: #928e85;
-    --line: #e7e4dd; --line-2: #efece5;
-    --accent: #3f6b4d; --accent-2: #57906a; --accent-soft: #e9f0ea;
-    --user-bubble: #edf3ee; --danger: #b3564f; --amber: #c08a2d;
-    --shadow: 0 1px 2px rgba(30,28,24,.04), 0 8px 24px rgba(30,28,24,.06);
-    --radius: 16px;
+    --bg: #FBF4E9; --surface: #FFFCF6; --surface-2: #FAF2E4;
+    --ink: #2C2118; --ink-2: #6E5F50; --muted: #A2917E;
+    --line: #ECE0CE; --line-2: #F3E9D9;
+    --accent: #DB8B36; --accent-2: #F0AC5B; --clay: #C0633A; --accent-soft: #FBEEDA;
+    --user-bubble: #F6E7CF; --danger: #C0563F; --amber: #C08A2D;
+    --shadow: 0 1px 2px rgba(74,48,20,.05), 0 10px 28px rgba(74,48,20,.09);
+    --radius: 16px; --spring: cubic-bezier(.22,1,.36,1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161513; --surface: #201e1c; --surface-2: #262320;
-      --ink: #ece9e2; --ink-2: #bcb8af; --muted: #8b877e;
-      --line: #322f2b; --line-2: #2a2724;
-      --accent: #6f9a78; --accent-2: #8ab894; --accent-soft: #232c25;
-      --user-bubble: #2a332c; --danger: #d98a83; --amber: #d6a94f;
-      --shadow: 0 1px 2px rgba(0,0,0,.2), 0 10px 30px rgba(0,0,0,.35);
+      --bg: #191310; --surface: #241C15; --surface-2: #2B2118;
+      --ink: #F1E7D8; --ink-2: #C4B5A2; --muted: #907F6D;
+      --line: #382A1D; --line-2: #2E2216;
+      --accent: #EBA557; --accent-2: #F7C079; --clay: #DB8B5C; --accent-soft: #2C2015;
+      --user-bubble: #2F2418; --danger: #E0947F; --amber: #D6A94F;
+      --shadow: 0 1px 2px rgba(0,0,0,.28), 0 12px 34px rgba(0,0,0,.42);
     }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
+    margin: 0; color: var(--ink);
+    background: radial-gradient(130% 70% at 50% -15%, var(--accent-soft), var(--bg) 52%);
     font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
     -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
     display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
   }
-  ::selection { background: var(--accent-soft); }
+  ::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 
   /* ---------- Header ---------- */
   header {
     flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
-    padding: 12px 22px; border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--surface) 82%, transparent);
-    backdrop-filter: saturate(1.2) blur(8px);
+    padding: 13px 22px; border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface) 78%, transparent);
+    backdrop-filter: saturate(1.2) blur(10px);
   }
   .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
   .logo {
-    width: 30px; height: 30px; border-radius: 9px; flex: 0 0 auto;
-    background: linear-gradient(150deg, var(--accent-2), var(--accent));
-    display: grid; place-items: center; box-shadow: var(--shadow);
+    width: 32px; height: 32px; border-radius: 10px; flex: 0 0 auto; display: grid; place-items: center;
+    background: linear-gradient(145deg, var(--accent-2), var(--clay));
+    box-shadow: 0 5px 14px color-mix(in srgb, var(--clay) 38%, transparent), inset 0 1px 0 rgba(255,255,255,.35);
   }
-  .logo svg { width: 17px; height: 17px; }
-  .brand .title { font-size: 16px; font-weight: 650; letter-spacing: .2px; line-height: 1.1; }
+  .logo svg { width: 19px; height: 19px; }
+  .brand .title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; line-height: 1.1; }
+  .brand .title span { color: var(--accent); }
   .brand .tag { font-size: 12px; color: var(--muted); line-height: 1.2; }
   .brand .stack { display: flex; flex-direction: column; min-width: 0; }
   .spacer { flex: 1; }
   .pill {
-    display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px;
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
     border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
     font-size: 12px; color: var(--ink-2); white-space: nowrap;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
-  .dot.ok { background: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 22%, transparent); }
-  .dot.warn { background: var(--amber); }
+  .dot.ok { background: #5aa06a; box-shadow: 0 0 0 3px color-mix(in srgb, #5aa06a 24%, transparent); }
   .dot.down { background: var(--danger); }
+  @media (prefers-color-scheme: dark) { .dot.ok { background: #7bbf88; } }
 
   /* ---------- Conversation ---------- */
   #log { flex: 1 1 auto; overflow-y: auto; scroll-behavior: smooth; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 26px 22px 8px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 22px 8px; }
 
-  .welcome { padding: 40px 0 8px; animation: rise .5s ease both; }
-  .welcome h2 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.2px; }
-  .welcome p { margin: 0 0 20px; color: var(--ink-2); max-width: 46ch; }
+  .welcome { padding: 44px 0 8px; animation: rise .55s var(--spring) both; }
+  .welcome h2 { font-size: 24px; margin: 0 0 8px; letter-spacing: -.02em; }
+  .welcome p { margin: 0 0 22px; color: var(--ink-2); max-width: 48ch; }
   .chips { display: flex; flex-wrap: wrap; gap: 9px; }
   .chip {
     border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
-    padding: 9px 14px; border-radius: 999px; font: inherit; font-size: 13.5px;
-    cursor: pointer; transition: transform .12s ease, border-color .12s ease, color .12s ease;
+    padding: 9px 15px; border-radius: 999px; font: inherit; font-size: 13.5px;
+    cursor: pointer; transition: transform .14s var(--spring), border-color .14s ease, color .14s ease, box-shadow .14s ease;
   }
-  .chip:hover { transform: translateY(-1px); border-color: var(--accent-2); color: var(--ink); }
+  .chip:hover { transform: translateY(-1px); border-color: var(--accent); color: var(--ink); box-shadow: var(--shadow); }
   .chip:active { transform: translateY(0); }
 
-  .turn { margin: 18px 0; animation: rise .34s ease both; }
-  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .turn { margin: 20px 0; animation: rise .38s var(--spring) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
 
   .turn.user { display: flex; justify-content: flex-end; }
   .turn.user .bubble {
@@ -105,11 +106,11 @@
 
   .turn.bot .who {
     display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
-    font-size: 11.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+    font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
   }
   .turn.bot .who .mk {
     width: 18px; height: 18px; border-radius: 6px; flex: 0 0 auto;
-    background: linear-gradient(150deg, var(--accent-2), var(--accent));
+    background: linear-gradient(145deg, var(--accent-2), var(--clay));
   }
   .turn.bot .body { overflow-wrap: break-word; }
   .turn.bot .body > *:first-child { margin-top: 0; }
@@ -122,7 +123,7 @@
   }
   .turn.err .body { color: var(--danger); }
 
-  .journal-title { font-size: 19px; font-weight: 650; letter-spacing: -.2px; margin: 2px 0 12px; }
+  .journal-title { font-size: 19px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0 12px; }
   .section-h {
     font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
     color: var(--muted); margin: 20px 0 12px;
@@ -130,10 +131,7 @@
 
   /* Timeline rendering */
   .timeline { margin: 4px 0 6px; }
-  .tl-row {
-    display: grid; grid-template-columns: 78px 18px 1fr; gap: 10px;
-    padding-bottom: 16px; position: relative;
-  }
+  .tl-row { display: grid; grid-template-columns: 78px 18px 1fr; gap: 10px; padding-bottom: 16px; position: relative; }
   .tl-row:last-child { padding-bottom: 2px; }
   .tl-time {
     font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -141,25 +139,13 @@
   }
   .tl-time small { display: block; color: var(--muted); font-size: 11.5px; }
   .tl-rail { position: relative; display: flex; justify-content: center; }
-  .tl-rail::before {
-    content: ""; position: absolute; top: 6px; bottom: -10px; width: 2px;
-    background: var(--line); border-radius: 2px;
-  }
+  .tl-rail::before { content: ""; position: absolute; top: 6px; bottom: -10px; width: 2px; background: var(--line); border-radius: 2px; }
   .tl-row:last-child .tl-rail::before { display: none; }
-  .tl-node {
-    width: 11px; height: 11px; border-radius: 50%; margin-top: 3px; z-index: 1;
-    background: var(--surface); border: 2px solid var(--accent-2);
-  }
+  .tl-node { width: 11px; height: 11px; border-radius: 50%; margin-top: 3px; z-index: 1; background: var(--surface); border: 2px solid var(--accent); }
   .tl-label { padding-top: 0; }
   .tl-label .lab { font-weight: 550; color: var(--ink); }
-  .tl-label .meta {
-    margin-top: 3px; display: inline-flex; align-items: center; gap: 6px;
-    font-size: 12px; color: var(--muted);
-  }
-  .tl-label .meta .app {
-    padding: 1px 8px; border-radius: 999px; background: var(--accent-soft);
-    color: var(--accent); font-weight: 600; font-size: 11.5px;
-  }
+  .tl-label .meta { margin-top: 3px; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .tl-label .meta .app { padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--clay); font-weight: 600; font-size: 11.5px; }
 
   /* Stats */
   .stats { display: flex; flex-direction: column; gap: 1px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
@@ -169,23 +155,23 @@
 
   /* Thinking indicator */
   #thinking { display: none; margin: 6px 0 2px; }
-  #thinking.on { display: block; animation: rise .3s ease both; }
+  #thinking.on { display: block; animation: rise .3s var(--spring) both; }
   .think-inner { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; }
   .think-dots { display: inline-flex; gap: 4px; }
-  .think-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); animation: blink 1.2s infinite ease-in-out; }
+  .think-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite ease-in-out; }
   .think-dots i:nth-child(2) { animation-delay: .18s; }
   .think-dots i:nth-child(3) { animation-delay: .36s; }
   @keyframes blink { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-2px); } }
 
   /* ---------- Composer ---------- */
-  .composer-shell { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--surface); }
+  .composer-shell { flex: 0 0 auto; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(8px); }
   form { max-width: 760px; margin: 0 auto; padding: 14px 22px 10px; }
   .inputrow {
     display: flex; align-items: flex-end; gap: 10px; background: var(--surface-2);
     border: 1px solid var(--line); border-radius: 16px; padding: 8px 8px 8px 14px;
     transition: border-color .15s ease, box-shadow .15s ease;
   }
-  .inputrow:focus-within { border-color: var(--accent-2); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 14%, transparent); }
+  .inputrow:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
   textarea {
     flex: 1; border: 0; background: transparent; color: var(--ink); font: inherit;
     resize: none; outline: none; padding: 6px 0; max-height: 160px; line-height: 1.5;
@@ -193,9 +179,10 @@
   textarea::placeholder { color: var(--muted); }
   #send {
     flex: 0 0 auto; width: 38px; height: 38px; border: 0; border-radius: 11px; cursor: pointer;
-    background: var(--accent); color: #fff; display: grid; place-items: center;
-    transition: transform .12s ease, opacity .12s ease;
+    background: linear-gradient(145deg, var(--accent-2), var(--accent)); color: #3a230c; display: grid; place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.35); transition: transform .12s var(--spring), opacity .12s ease;
   }
+  @media (prefers-color-scheme: dark) { #send { color: #241408; } }
   #send:hover:not(:disabled) { transform: translateY(-1px); }
   #send:disabled { opacity: .4; cursor: default; }
   #send svg { width: 18px; height: 18px; }
@@ -205,34 +192,35 @@
   /* ---------- First-run setup modal ---------- */
   #setup-backdrop {
     display: none; position: fixed; inset: 0; z-index: 50;
-    background: color-mix(in srgb, #000 42%, transparent);
-    backdrop-filter: blur(3px); place-items: center; padding: 22px;
+    background: color-mix(in srgb, #2c2118 46%, transparent);
+    backdrop-filter: blur(4px); place-items: center; padding: 22px;
   }
   #setup-backdrop.on { display: grid; }
   .modal {
     width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line);
-    border-radius: 20px; padding: 26px; box-shadow: var(--shadow); animation: rise .3s ease both;
+    border-radius: 20px; padding: 28px; box-shadow: var(--shadow); animation: rise .3s var(--spring) both;
   }
   .modal .ico {
-    width: 44px; height: 44px; border-radius: 12px; margin-bottom: 14px;
-    background: linear-gradient(150deg, var(--accent-2), var(--accent));
-    display: grid; place-items: center;
+    width: 46px; height: 46px; border-radius: 13px; margin-bottom: 15px; display: grid; place-items: center;
+    background: linear-gradient(145deg, var(--accent-2), var(--clay));
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--clay) 36%, transparent), inset 0 1px 0 rgba(255,255,255,.35);
   }
-  .modal .ico svg { width: 22px; height: 22px; }
-  .modal h2 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.2px; }
+  .modal .ico svg { width: 23px; height: 23px; }
+  .modal h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.02em; }
   .modal p { margin: 0 0 16px; color: var(--ink-2); font-size: 14px; }
   .field { display: flex; gap: 8px; }
   .field input {
-    flex: 1; padding: 11px 13px; border: 1px solid var(--line); border-radius: 11px;
+    flex: 1; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
     background: var(--surface-2); color: var(--ink); font: inherit; outline: none;
   }
-  .field input:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 16%, transparent); }
+  .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
   .field button {
-    padding: 11px 18px; border: 0; border-radius: 11px; background: var(--accent); color: #fff;
-    font: inherit; font-weight: 600; cursor: pointer;
+    padding: 12px 20px; border: 0; border-radius: 12px; color: #3a230c; font: inherit; font-weight: 650; cursor: pointer;
+    background: linear-gradient(145deg, var(--accent-2), var(--accent)); box-shadow: inset 0 1px 0 rgba(255,255,255,.35);
   }
+  @media (prefers-color-scheme: dark) { .field button { color: #241408; } }
   .field button:disabled { opacity: .5; cursor: default; }
-  .reassure { margin: 12px 0 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+  .reassure { margin: 13px 0 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
   .setup-err { margin: 10px 0 0; font-size: 13px; color: var(--danger); display: none; }
   .setup-err.on { display: block; }
 
@@ -249,11 +237,12 @@
   <div class="brand">
     <div class="logo" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>
+        <circle cx="12" cy="12" r="4.4" fill="#fff" stroke="none"/>
+        <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>
       </svg>
     </div>
     <div class="stack">
-      <span class="title">Daylook</span>
+      <span class="title">Day<span>Look</span></span>
       <span class="tag">your day, in plain words</span>
     </div>
   </div>
@@ -265,7 +254,7 @@
   <div class="wrap">
     <div id="welcome" class="welcome">
       <h2>Good to see you.</h2>
-      <p>Daylook quietly turns your screen activity into a plain-language timeline of your day. Start tracking, then ask about it whenever.</p>
+      <p>DayLook quietly turns your screen activity into a plain-language timeline of your day. Start tracking, then ask about it whenever.</p>
       <div class="chips" id="chips">
         <button class="chip" type="button">Start tracking my screen</button>
         <button class="chip" type="button">What did I do today?</button>
@@ -305,12 +294,12 @@
       </svg>
     </div>
     <h2>One quick thing</h2>
-    <p>Paste the invite code you were given. It connects Daylook to its AI. It's stored only on this Mac and never leaves it except to make your requests.</p>
+    <p>Paste the invite code you were given. It connects DayLook to its AI. It's stored only on this Mac and never leaves it except to make your requests.</p>
     <div class="field">
       <input type="text" id="invite" placeholder="cl_…" autocomplete="off" spellcheck="false">
       <button id="save-invite" type="button">Connect</button>
     </div>
-    <div class="setup-err" id="setup-err">That code didn't work — double-check it and try again.</div>
+    <div class="setup-err" id="setup-err">That code didn't work. Double-check it and try again.</div>
     <p class="reassure">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
       Runs locally · no account · nothing shared without you
@@ -323,6 +312,9 @@
   // first reply and reusing it keeps refinements ("ignore Slack") alive.
   let sessionId = null;
   let busy = false;
+  // The user names the assistant on first run; that name labels every reply.
+  let assistantName = localStorage.getItem("dl_assistant_name") || "";
+  let awaitingName = false;
 
   const log = document.getElementById("log");
   const messages = document.getElementById("messages");
@@ -333,21 +325,18 @@
 
   const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  // Inline formatting on already-escaped text: **bold** and `code` only.
   const inline = (s) => escapeHtml(s)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
+  const botLabel = () => escapeHtml(assistantName || "Assistant");
 
   const RANGE = /^-\s*(\d{1,2}:\d{2})\s*[–—-]\s*(\d{1,2}:\d{2})\s*[–—-]\s*(.+)$/;
 
-  // Turn the assistant's light-markdown writeup into structured HTML. Timeline
-  // ranges become a visual rail; "## By the numbers" bullets become a stat card;
-  // everything else is prose. Non-writeup replies just fall through as <p>'s.
   function renderReply(text) {
     const lines = text.replace(/\r/g, "").split("\n");
     let html = "";
     let i = 0;
-    let section = "";  // tracks which "## ..." block we're in
+    let section = "";
 
     const flushParas = (buf) => {
       const t = buf.join("\n").trim();
@@ -357,23 +346,22 @@
     while (i < lines.length) {
       let line = lines[i];
 
-      if (/^#\s+/.test(line)) {                        // "# Work journal — date"
+      if (/^#\s+/.test(line)) {
         html += `<div class="journal-title">${inline(line.replace(/^#\s+/, ""))}</div>`;
         i++; continue;
       }
-      if (/^##\s+/.test(line)) {                       // "## Timeline" / "## By the numbers"
+      if (/^##\s+/.test(line)) {
         section = line.replace(/^##\s+/, "").trim();
         html += `<div class="section-h">${inline(section)}</div>`;
         i++; continue;
       }
 
-      // A run of timeline ranges -> one .timeline block.
       if (RANGE.test(line)) {
         let rows = "";
         while (i < lines.length && RANGE.test(lines[i])) {
           const m = lines[i].match(RANGE);
           let rest = m[3].trim(), meta = "";
-          const mm = rest.match(/^(.*?)\s*\(([^)]*)\)\s*$/);   // trailing "(app, Nm)"
+          const mm = rest.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
           if (mm) { rest = mm[1].trim(); meta = mm[2].trim(); }
           let metaHtml = "";
           if (meta) {
@@ -393,7 +381,6 @@
         continue;
       }
 
-      // Under "By the numbers", bullets are key: value stat rows.
       if (/^-\s+/.test(line) && /by the numbers/i.test(section)) {
         let rows = "";
         while (i < lines.length && /^-\s+/.test(lines[i])) {
@@ -410,7 +397,6 @@
         continue;
       }
 
-      // Generic bullet list.
       if (/^[-*]\s+/.test(line)) {
         let items = "";
         while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
@@ -421,13 +407,12 @@
         continue;
       }
 
-      // Otherwise accumulate a prose paragraph until a blank line or special line.
       const buf = [];
       while (i < lines.length && lines[i].trim() &&
              !/^#{1,2}\s+/.test(lines[i]) && !/^[-*]\s+/.test(lines[i]) && !RANGE.test(lines[i])) {
         buf.push(lines[i]); i++;
       }
-      if (buf.length) flushParas(buf); else i++;   // skip blank lines
+      if (buf.length) flushParas(buf); else i++;
     }
     return html || `<p>${inline(text)}</p>`;
   }
@@ -445,15 +430,33 @@
   }
 
   function addBot(text, isErr) {
+    welcome.style.display = "none";
     const t = document.createElement("div");
     t.className = "turn bot" + (isErr ? " err" : "");
-    t.innerHTML = `<div class="who"><span class="mk"></span>Daylook</div><div class="body"></div>`;
+    t.innerHTML = `<div class="who"><span class="mk"></span>${botLabel()}</div><div class="body"></div>`;
     t.querySelector(".body").innerHTML = isErr ? `<p>${inline(text)}</p>` : renderReply(text);
     messages.appendChild(t);
     scrollDown();
   }
 
   function scrollDown() { log.scrollTop = log.scrollHeight; }
+
+  // First-run: ask the user to name their assistant (only once, then remembered).
+  function maybeAskName() {
+    if (assistantName) return;
+    awaitingName = true;
+    welcome.style.display = "none";
+    addBot("Hi there. Before we begin, what would you like to call me? Pick any name you like.");
+    box.focus();
+  }
+
+  function setName(name) {
+    assistantName = name.slice(0, 40);
+    localStorage.setItem("dl_assistant_name", assistantName);
+    awaitingName = false;
+    addUser(name);
+    addBot(`Lovely to meet you. I'm ${assistantName} from now on. Say "start tracking" and I'll begin keeping your day, then ask me about it whenever you like.`);
+  }
 
   async function sendMessage(text) {
     if (!text || busy) return;
@@ -479,6 +482,13 @@
     }
   }
 
+  // Route input: the naming answer is captured locally; everything else goes to the server.
+  function handleInput(text) {
+    if (!text) return;
+    if (awaitingName) { setName(text); return; }
+    sendMessage(text);
+  }
+
   // Composer: auto-grow, Enter to send, Shift+Enter for newline.
   function autogrow() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 160) + "px"; }
   box.addEventListener("input", autogrow);
@@ -486,30 +496,28 @@
     e.preventDefault();
     const text = box.value.trim();
     box.value = ""; autogrow();
-    sendMessage(text);
+    handleInput(text);
   });
   box.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); document.getElementById("composer").requestSubmit(); }
   });
 
-  // Suggestion chips send immediately.
   document.getElementById("chips").addEventListener("click", (e) => {
     const chip = e.target.closest(".chip");
-    if (chip) sendMessage(chip.textContent.trim());
+    if (chip) handleInput(chip.textContent.trim());
   });
 
-  // ---------- Status pill (best-effort, informational) ----------
+  // ---------- Status pill (clean: connection only, no model/pending) ----------
   async function refreshHealth() {
     const dot = document.getElementById("status-dot");
     const txt = document.getElementById("status-text");
     try {
-      const h = await (await fetch("/health")).json();
-      const pending = h.pending_events == null ? "?" : h.pending_events;
+      await (await fetch("/health")).json();
       dot.className = "dot ok";
-      txt.textContent = `${h.model} · ${pending} pending`;
+      txt.textContent = "Connected";
     } catch {
       dot.className = "dot down";
-      txt.textContent = "app not reachable";
+      txt.textContent = "Offline";
     }
   }
   refreshHealth();
@@ -521,14 +529,6 @@
   const saveBtn = document.getElementById("save-invite");
   const setupErr = document.getElementById("setup-err");
 
-  async function checkSetup() {
-    try {
-      const res = await fetch("/setup");
-      if (!res.ok) return;                       // dev server without /setup — skip
-      const s = await res.json();
-      if (!s.configured) { backdrop.classList.add("on"); invite.focus(); }
-    } catch { /* no /setup endpoint — fine */ }
-  }
   async function saveInvite() {
     const token = invite.value.trim();
     if (!token) { invite.focus(); return; }
@@ -540,7 +540,7 @@
       });
       if (!res.ok) throw new Error();
       backdrop.classList.remove("on");
-      addBot("You're connected. Try “start tracking my screen”, then ask me about your day whenever you like.", false);
+      maybeAskName();
       box.focus();
     } catch {
       setupErr.classList.add("on");
@@ -551,7 +551,19 @@
   saveBtn.addEventListener("click", saveInvite);
   invite.addEventListener("keydown", (e) => { if (e.key === "Enter") saveInvite(); });
 
-  checkSetup();
+  // Boot: check whether an invite code is set. If yes (or no /setup on dev), go
+  // straight to naming; if not, the invite modal handles it, then naming follows.
+  async function boot() {
+    try {
+      const res = await fetch("/setup");
+      if (res.ok) {
+        const s = await res.json();
+        if (!s.configured) { backdrop.classList.add("on"); invite.focus(); return; }
+      }
+    } catch { /* no /setup endpoint on dev — fine */ }
+    maybeAskName();
+  }
+  boot();
 </script>
 </body>
 </html>

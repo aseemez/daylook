@@ -3,143 +3,241 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Daylook — Where did your day actually go?</title>
-<meta name="description" content="Daylook turns your screen activity into a readable daily timeline. Find out where your hours actually go.">
+<title>Daylook — Did you do your best today?</title>
+<meta name="description" content="Daylook turns your screen activity into a warm, readable timeline of your day, so you can see where the hours really went and make tomorrow better.">
 <style>
-  /* Same journal palette as the app + docs page, so the funnel feels like the product. */
+  /* ---- Daylook: golden-hour warmth. Warm cream + honey, terracotta depth, soft aurora. ---- */
   :root {
-    --bg: #f6f5f1; --surface: #ffffff; --surface-2: #fbfaf7;
-    --ink: #23221f; --ink-2: #56534c; --muted: #928e85;
-    --line: #e7e4dd; --accent: #3f6b4d; --accent-2: #57906a; --accent-soft: #e9f0ea;
-    --danger: #b3564f; --danger-soft: #f7ebea; --amber: #9a6a15;
-    --shadow: 0 1px 2px rgba(30,28,24,.05), 0 12px 32px rgba(30,28,24,.08);
+    --bg: #FBF4E9; --bg-tint: #F4E8D6; --surface: #FFFCF6; --surface-2: #FAF2E4;
+    --ink: #2C2118; --ink-2: #6E5F50; --muted: #A2917E;
+    --line: #ECE0CE; --line-2: #F2E8D8;
+    --honey: #DB8B36; --honey-2: #F0AC5B; --clay: #C0633A; --peach: #F6C9A0; --rose: #E7A488;
+    --soft: #FBEEDA; --danger: #C0563F;
+    --ring: 0 0 0 4px color-mix(in srgb, var(--honey) 20%, transparent);
+    --shadow: 0 1px 2px rgba(74,48,20,.05), 0 16px 38px rgba(74,48,20,.10);
+    --shadow-lg: 0 2px 4px rgba(74,48,20,.06), 0 30px 60px rgba(74,48,20,.16);
+    --spring: cubic-bezier(.22,1,.36,1);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #161513; --surface: #201e1c; --surface-2: #262320;
-      --ink: #ece9e2; --ink-2: #bcb8af; --muted: #8b877e;
-      --line: #322f2b; --accent: #6f9a78; --accent-2: #8ab894; --accent-soft: #232c25;
-      --danger: #d98a83; --danger-soft: #322422; --amber: #d6a94f;
-      --shadow: 0 1px 2px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.4);
+      --bg: #191310; --bg-tint: #201810; --surface: #241C15; --surface-2: #2B2118;
+      --ink: #F1E7D8; --ink-2: #C4B5A2; --muted: #907F6D;
+      --line: #382A1D; --line-2: #2E2216;
+      --honey: #EBA557; --honey-2: #F7C079; --clay: #DB8B5C; --peach: #4C3826; --rose: #C98363;
+      --soft: #2C2015; --danger: #E0947F;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 18px 46px rgba(0,0,0,.5);
+      --shadow-lg: 0 2px 6px rgba(0,0,0,.4), 0 34px 70px rgba(0,0,0,.6);
     }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    -webkit-font-smoothing: antialiased;
+    font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    overflow-x: hidden;
   }
-  .wrap { max-width: 640px; margin: 0 auto; padding: 0 22px; }
-  h1, h2, h3 { letter-spacing: -.4px; line-height: 1.2; }
-  .screen { display: none; min-height: 100svh; flex-direction: column; justify-content: center; padding: 48px 0; }
-  .screen.active { display: flex; animation: fadein .35s ease; }
-  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  ::selection { background: color-mix(in srgb, var(--honey) 30%, transparent); }
+  h1, h2, h3 { letter-spacing: -.02em; line-height: 1.12; }
 
-  .brand { font-weight: 700; font-size: 15px; letter-spacing: .2px; color: var(--ink-2); margin-bottom: 28px; }
-  .brand span { color: var(--accent); }
+  /* ---- Aurora ambient: warm blurred light drifting behind everything ---- */
+  .aurora { position: fixed; inset: -20% -10% -10% -10%; z-index: 0; pointer-events: none; overflow: hidden; }
+  .aurora span { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55; will-change: transform; }
+  .aurora .a { width: 46vw; height: 46vw; left: -6vw; top: -8vw; background: radial-gradient(circle, var(--honey-2), transparent 68%); animation: drift1 22s var(--spring) infinite alternate; }
+  .aurora .b { width: 40vw; height: 40vw; right: -8vw; top: 6vh; background: radial-gradient(circle, var(--rose), transparent 66%); opacity: .42; animation: drift2 26s var(--spring) infinite alternate; }
+  .aurora .c { width: 44vw; height: 44vw; left: 24vw; bottom: -18vw; background: radial-gradient(circle, var(--peach), transparent 68%); opacity: .5; animation: drift3 30s var(--spring) infinite alternate; }
+  @media (prefers-color-scheme: dark) { .aurora span { opacity: .3 !important; } }
+  @keyframes drift1 { to { transform: translate(6vw, 5vh) scale(1.15); } }
+  @keyframes drift2 { to { transform: translate(-5vw, 8vh) scale(1.1); } }
+  @keyframes drift3 { to { transform: translate(4vw, -6vh) scale(1.12); } }
+  @media (prefers-reduced-motion: reduce) { .aurora span { animation: none; } }
 
-  .kicker { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--danger); margin-bottom: 10px; }
-  .hero h1 { font-size: clamp(30px, 6vw, 44px); margin: 0 0 16px; }
-  .hero p.lede { font-size: 18px; color: var(--ink-2); margin: 0 0 8px; }
-  .stat-strip { display: flex; gap: 12px; margin: 28px 0 32px; flex-wrap: wrap; }
-  .stat { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
-  .stat b { display: block; font-size: 22px; color: var(--danger); letter-spacing: -.5px; }
-  .stat small { color: var(--muted); font-size: 12.5px; line-height: 1.4; display: block; }
+  .wrap { position: relative; z-index: 1; max-width: 640px; margin: 0 auto; padding: 0 24px; }
+  .screen { display: none; min-height: 100svh; flex-direction: column; justify-content: center; padding: 56px 0; }
+  .screen.active { display: flex; }
+  .screen.active > * { animation: rise .6s var(--spring) both; }
+  .screen.active > *:nth-child(2) { animation-delay: .06s; }
+  .screen.active > *:nth-child(3) { animation-delay: .12s; }
+  .screen.active > *:nth-child(4) { animation-delay: .18s; }
+  .screen.active > *:nth-child(5) { animation-delay: .24s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
+  /* ---- Brand / logo ---- */
+  .brand { display: inline-flex; align-items: center; gap: 11px; margin-bottom: 30px; }
+  .mark {
+    width: 38px; height: 38px; border-radius: 12px; flex: 0 0 auto; display: grid; place-items: center;
+    background: linear-gradient(145deg, var(--honey-2), var(--clay));
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--clay) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.35);
+  }
+  .mark svg { width: 22px; height: 22px; }
+  .brand b { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+  .brand b span { color: var(--honey); }
+
+  .kicker { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .16em; color: var(--clay); margin-bottom: 14px; }
+  .hero h1 { font-size: clamp(32px, 6.4vw, 50px); margin: 0 0 18px; font-weight: 750; }
+  .hero h1 .warm { color: var(--honey); }
+  .lede { font-size: clamp(17px, 2.6vw, 19px); color: var(--ink-2); margin: 0 0 30px; max-width: 34ch; }
+
+  /* ---- Buttons ---- */
   .btn {
-    display: inline-block; border: 0; cursor: pointer; text-decoration: none; text-align: center;
-    background: var(--accent); color: #fff; font: 600 16px/1 inherit; font-family: inherit;
-    padding: 15px 26px; border-radius: 12px; box-shadow: var(--shadow); transition: transform .08s ease, background .15s ease;
+    position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 9px;
+    border: 0; cursor: pointer; text-decoration: none; text-align: center; align-self: flex-start;
+    background: linear-gradient(145deg, var(--honey-2), var(--honey)); color: #3a230c;
+    font: 650 16.5px/1 inherit; font-family: inherit; padding: 16px 28px; border-radius: 14px;
+    box-shadow: 0 8px 22px color-mix(in srgb, var(--honey) 42%, transparent), inset 0 1px 0 rgba(255,255,255,.4);
+    transition: transform .18s var(--spring), box-shadow .18s var(--spring), filter .18s ease;
   }
-  .btn:hover { background: var(--accent-2); }
-  .btn:active { transform: scale(.98); }
-  .btn.block { display: block; width: 100%; }
-  .ghost { background: none; border: 0; color: var(--muted); font: 500 14px inherit; font-family: inherit; cursor: pointer; margin-top: 14px; }
+  @media (prefers-color-scheme: dark) { .btn { color: #241408; } }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 14px 30px color-mix(in srgb, var(--honey) 50%, transparent), inset 0 1px 0 rgba(255,255,255,.4); }
+  .btn:active { transform: translateY(0) scale(.99); }
+  .btn.block { align-self: stretch; width: 100%; justify-content: center; }
+  .btn svg { width: 18px; height: 18px; }
+  /* shimmer sweep */
+  .btn::after {
+    content: ""; position: absolute; inset: 0; transform: translateX(-120%) skewX(-16deg);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent); width: 55%;
+  }
+  .btn:hover::after { transition: transform .8s var(--spring); transform: translateX(320%) skewX(-16deg); }
+  .ghost { background: none; border: 0; color: var(--muted); font: 500 14.5px inherit; font-family: inherit; cursor: pointer; margin-top: 16px; align-self: flex-start; padding: 4px 0; }
+  .ghost:hover { color: var(--ink-2); }
 
-  .progress { display: flex; gap: 6px; margin-bottom: 30px; }
-  .progress i { height: 4px; flex: 1; border-radius: 2px; background: var(--line); }
-  .progress i.on { background: var(--accent); }
+  /* ---- Glass cards ---- */
+  .card {
+    position: relative; border-radius: 18px; padding: 20px 22px;
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+    border: 1px solid var(--line); box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15);
+  }
 
-  .q h2 { font-size: clamp(24px, 5vw, 32px); margin: 0 0 6px; }
-  .q .sub { color: var(--muted); margin: 0 0 24px; font-size: 15px; }
-  .opts { display: grid; gap: 10px; }
+  /* ---- Stat cards ---- */
+  .stat-grid { display: grid; gap: 14px; margin: 6px 0 30px; }
+  @media (min-width: 520px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
+  .stat { text-align: left; }
+  .stat .big { font-size: clamp(28px, 5vw, 34px); font-weight: 800; letter-spacing: -.03em; color: var(--clay); line-height: 1; }
+  .stat small { display: block; margin-top: 8px; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
+  .cite { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+  /* ---- Quiz ---- */
+  .progress { display: flex; gap: 6px; margin-bottom: 34px; }
+  .progress i { height: 5px; flex: 1; border-radius: 3px; background: var(--line); transition: background .4s var(--spring); }
+  .progress i.on { background: linear-gradient(90deg, var(--honey), var(--clay)); }
+  .q h2 { font-size: clamp(25px, 5vw, 33px); margin: 0 0 8px; font-weight: 720; }
+  .q .sub { color: var(--muted); margin: 0 0 26px; font-size: 15.5px; }
+  .opts { display: grid; gap: 12px; }
   .opt {
-    text-align: left; background: var(--surface); color: var(--ink); border: 1.5px solid var(--line);
-    border-radius: 14px; padding: 16px 18px; font: 500 16px/1.45 inherit; font-family: inherit; cursor: pointer;
-    transition: border-color .12s ease, transform .08s ease;
+    position: relative; text-align: left; color: var(--ink); cursor: pointer;
+    background: color-mix(in srgb, var(--surface) 78%, transparent); border: 1.5px solid var(--line);
+    border-radius: 16px; padding: 17px 19px; font: 550 16px/1.4 inherit; font-family: inherit;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    transition: border-color .18s var(--spring), transform .18s var(--spring), box-shadow .18s var(--spring);
   }
-  .opt:hover { border-color: var(--accent-2); }
-  .opt:active { transform: scale(.99); }
-  .opt small { display: block; color: var(--muted); font-size: 13px; }
+  .opt:hover { border-color: var(--honey); transform: translateY(-2px); box-shadow: var(--shadow); }
+  .opt:active { transform: translateY(0) scale(.995); }
+  .opt small { display: block; color: var(--muted); font-weight: 450; font-size: 13.5px; margin-top: 3px; }
 
-  /* analyzing */
-  .an { text-align: center; }
-  .ring { width: 74px; height: 74px; margin: 0 auto 26px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--accent); animation: spin 1s linear infinite; }
+  /* ---- Analyzing ---- */
+  .an { text-align: center; align-items: center; }
+  .halo { position: relative; width: 96px; height: 96px; margin: 0 auto 30px; }
+  .halo .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid transparent;
+    border-top-color: var(--honey); border-right-color: var(--clay); animation: spin 1.1s linear infinite; }
+  .halo .core { position: absolute; inset: 26px; border-radius: 50%;
+    background: radial-gradient(circle, var(--honey-2), var(--clay)); box-shadow: 0 0 40px color-mix(in srgb, var(--honey) 60%, transparent);
+    animation: pulse 2s var(--spring) infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .an-line { color: var(--muted); font-size: 15px; min-height: 24px; }
+  @keyframes pulse { 0%,100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.12); opacity: 1; } }
+  .an-line { color: var(--ink-2); font-size: 16px; min-height: 24px; }
 
-  /* reveal */
-  .big-number { font-size: clamp(56px, 14vw, 88px); font-weight: 800; letter-spacing: -3px; color: var(--danger); line-height: 1; }
-  .big-number small { font-size: clamp(20px, 4vw, 26px); font-weight: 700; letter-spacing: -.5px; }
-  .reveal-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin: 22px 0; box-shadow: var(--shadow); }
-  .reveal-card p { margin: 8px 0; color: var(--ink-2); }
-  .reveal-card b.bad { color: var(--danger); }
-  .timeline-tease { border-left: 3px solid var(--accent); padding-left: 14px; margin: 18px 0 4px; filter: blur(0); }
-  .timeline-tease div { font: 500 14.5px/2 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .timeline-tease div span { color: var(--muted); }
-  .cite { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  /* ---- Reveal ---- */
+  .bignum { font-size: clamp(64px, 16vw, 104px); font-weight: 850; letter-spacing: -.05em; line-height: .9;
+    background: linear-gradient(140deg, var(--clay), var(--honey)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .bignum small { font-size: clamp(22px, 4.5vw, 30px); font-weight: 750; -webkit-text-fill-color: var(--ink-2); }
+  .reveal-lead { font-size: 17.5px; color: var(--ink); margin: 12px 0 0; }
+  .reveal-lead b { color: var(--clay); }
+  .reveal-card { margin: 24px 0; }
+  .reveal-card p { margin: 0 0 12px; color: var(--ink-2); font-size: 15px; }
+  .reveal-card p:last-child { margin-bottom: 0; }
+  .reveal-card b.warm { color: var(--clay); }
+  .tease { margin: 16px 0; padding-left: 16px; border-left: 3px solid; border-image: linear-gradient(var(--honey), var(--clay)) 1; }
+  .tease div { font: 500 14px/2 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tease div span { color: var(--muted); }
 
-  /* plans */
-  .plans { display: grid; gap: 12px; margin: 24px 0 8px; }
+  /* ---- Plans ---- */
+  .plan-h { font-size: 21px; font-weight: 720; margin: 8px 0 2px; }
+  .plan-sub { color: var(--muted); font-size: 14.5px; margin: 0 0 20px; }
+  .plans { display: grid; gap: 14px; perspective: 1000px; }
   .plan {
-    position: relative; background: var(--surface); border: 1.5px solid var(--line); border-radius: 16px;
-    padding: 18px 20px; cursor: pointer; display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-    font-family: inherit; text-align: left; transition: border-color .12s ease;
+    position: relative; cursor: pointer; font-family: inherit; text-align: left;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1.5px solid var(--line);
+    border-radius: 18px; padding: 20px 22px; transform-style: preserve-3d;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    transition: border-color .2s var(--spring), box-shadow .2s var(--spring), opacity .3s var(--spring), transform .3s var(--spring);
   }
-  .plan:hover { border-color: var(--accent-2); }
-  .plan.best { border-color: var(--accent); background: var(--accent-soft); }
-  .plan .name { font-weight: 700; font-size: 16px; color: var(--ink); }
-  .plan .name small { display: block; font-weight: 500; color: var(--muted); font-size: 13px; }
-  .plan .price { font-weight: 800; font-size: 20px; color: var(--ink); letter-spacing: -.5px; white-space: nowrap; }
+  .plan .accent { position: absolute; inset: 0; border-radius: 18px; opacity: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 15% 10%, color-mix(in srgb, var(--honey) 22%, transparent), transparent 62%);
+    transition: opacity .3s var(--spring); }
+  .plan:hover { border-color: var(--honey); box-shadow: var(--shadow-lg); }
+  .plan:hover .accent { opacity: 1; }
+  .plans.focusing .plan:not(:hover) { opacity: .5; transform: scale(.97); }
+  .plan.best { border-color: color-mix(in srgb, var(--honey) 55%, var(--line)); background: color-mix(in srgb, var(--soft) 70%, transparent); }
+  .plan .name { font-weight: 720; font-size: 16.5px; }
+  .plan .name small { display: block; font-weight: 450; color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .plan .price { font-weight: 820; font-size: 22px; letter-spacing: -.02em; white-space: nowrap; }
   .plan .price small { font-weight: 500; font-size: 12.5px; color: var(--muted); }
-  .badge { position: absolute; top: -10px; right: 14px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .6px; padding: 3px 10px; border-radius: 99px; }
-  .fine { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 16px; }
-  .err { display: none; color: var(--danger); background: var(--danger-soft); border-radius: 10px; padding: 10px 14px; margin-top: 14px; font-size: 14px; }
+  .badge { position: absolute; top: -11px; right: 16px; background: linear-gradient(145deg, var(--honey-2), var(--clay)); color: #fff;
+    font-size: 10.5px; font-weight: 800; letter-spacing: .09em; padding: 4px 11px; border-radius: 99px; box-shadow: var(--shadow); }
+  .fine { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 18px; }
+  .err { display: none; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-radius: 12px; padding: 11px 15px; margin-top: 16px; font-size: 14px; }
 </style>
 </head>
 <body>
+<div class="aurora" aria-hidden="true"><span class="a"></span><span class="b"></span><span class="c"></span></div>
 <div class="wrap">
 
   <!-- 1 · Hook -->
   <section class="screen hero active" id="s-hero">
-    <div class="brand">context<span>line</span></div>
-    <div class="kicker">The uncomfortable truth about your workday</div>
-    <h1>You worked 8 hours yesterday.<br>Can you say what you did?</h1>
-    <p class="lede">Most people can't — and it's costing them more than they think.</p>
-    <div class="stat-strip">
-      <div class="stat"><b>2h 48m</b><small>of real focus in an average 8-hour day — the rest evaporates¹</small></div>
-      <div class="stat"><b>23 min</b><small>to fully refocus after every single interruption²</small></div>
-      <div class="stat"><b>47×</b><small>the average worker switches context per day²</small></div>
-    </div>
-    <button class="btn" onclick="go('s-q1')">Find out where your day goes →</button>
-    <p class="cite">¹ RescueTime, analysis of 185M working hours &nbsp;² Dr. Gloria Mark, UC Irvine</p>
+    <div class="brand"><span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4.4" fill="#fff" stroke="none"/>
+        <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.2 5.2l1.6 1.6M17.2 17.2l1.6 1.6M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6"/>
+      </svg></span><b>Day<span>Look</span></b></div>
+    <h1>You were at your desk all day.<br>But did you do your <span class="warm">best?</span></h1>
+    <p class="lede">Most people work all day but can't say where the hours went, so they can never make tomorrow better.</p>
+    <button class="btn" onclick="go('s-stats')">See where your day goes
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </button>
   </section>
 
-  <!-- 2 · Q1 -->
+  <!-- 2 · Stats -->
+  <section class="screen" id="s-stats">
+    <div class="kicker">The quiet math of a busy day</div>
+    <h1 style="font-size:clamp(26px,5.4vw,38px);margin:0 0 26px;font-weight:730">A normal working day leaks more than you'd guess.</h1>
+    <div class="stat-grid">
+      <div class="card stat"><div class="big">2h 48m</div><small>of real focus in an average 8-hour day. The rest quietly slips away.</small></div>
+      <div class="card stat"><div class="big">23 min</div><small>to fully refocus after a single interruption.</small></div>
+      <div class="card stat"><div class="big">47&times;</div><small>the average worker switches tasks per day.</small></div>
+    </div>
+    <p class="cite">Sources: RescueTime (185M working hours) and Dr. Gloria Mark, UC Irvine.</p>
+    <button class="btn" onclick="go('s-q1')" style="margin-top:22px">That sounds like me
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </button>
+  </section>
+
+  <!-- 3 · Q1 -->
   <section class="screen q" id="s-q1">
     <div class="progress"><i class="on"></i><i></i><i></i><i></i><i></i></div>
     <h2>How many hours a day do you <em>feel</em> truly focused?</h2>
-    <p class="sub">Gut answer — nobody's checking.</p>
+    <p class="sub">Gut answer. Nobody is checking.</p>
     <div class="opts">
-      <button class="opt" onclick="answer('belief', 6, 's-q2')">5–6+ hours <small>locked in most of the day</small></button>
-      <button class="opt" onclick="answer('belief', 4, 's-q2')">3–4 hours <small>solid, with some drift</small></button>
-      <button class="opt" onclick="answer('belief', 2, 's-q2')">1–2 hours <small>the rest is a scramble</small></button>
-      <button class="opt" onclick="answer('belief', 0, 's-q2')">Honestly, no idea <small>that's kind of the problem</small></button>
+      <button class="opt" onclick="answer('belief', 6, 's-q2')">5 to 6+ hours <small>locked in most of the day</small></button>
+      <button class="opt" onclick="answer('belief', 4, 's-q2')">3 to 4 hours <small>solid, with some drift</small></button>
+      <button class="opt" onclick="answer('belief', 2, 's-q2')">1 to 2 hours <small>the rest is a scramble</small></button>
+      <button class="opt" onclick="answer('belief', 0, 's-q2')">Honestly, no idea <small>that is kind of the problem</small></button>
     </div>
   </section>
 
-  <!-- 3 · Q2 -->
+  <!-- 4 · Q2 -->
   <section class="screen q" id="s-q2">
     <div class="progress"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
     <h2>Quick: what did you actually do last Tuesday?</h2>
@@ -147,68 +245,69 @@
     <div class="opts">
       <button class="opt" onclick="answer('memory', 0, 's-q3')">I could walk you through it</button>
       <button class="opt" onclick="answer('memory', 1, 's-q3')">A rough idea, big blocks only</button>
-      <button class="opt" onclick="answer('memory', 2, 's-q3')">It's a blur, like most days</button>
+      <button class="opt" onclick="answer('memory', 2, 's-q3')">It is a blur, like most days</button>
     </div>
   </section>
 
-  <!-- 4 · Q3 -->
+  <!-- 5 · Q3 -->
   <section class="screen q" id="s-q3">
     <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
     <h2>Mid-task, how often do you flick to Slack, email, or your phone?</h2>
-    <p class="sub">Every flick costs ~23 minutes of full focus to undo.</p>
+    <p class="sub">Every flick costs about 23 minutes of full focus to undo.</p>
     <div class="opts">
-      <button class="opt" onclick="answer('switches', 18, 's-an')">Rarely — I protect my blocks</button>
+      <button class="opt" onclick="answer('switches', 18, 's-an')">Rarely. I protect my blocks.</button>
       <button class="opt" onclick="answer('switches', 32, 's-an')">Every hour or so</button>
-      <button class="opt" onclick="answer('switches', 47, 's-an')">Every few minutes <small>it's a reflex at this point</small></button>
+      <button class="opt" onclick="answer('switches', 47, 's-an')">Every few minutes <small>it is a reflex at this point</small></button>
     </div>
   </section>
 
-  <!-- 5 · Analyzing -->
+  <!-- 6 · Analyzing -->
   <section class="screen an" id="s-an">
-    <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
-    <div class="ring"></div>
-    <h2 style="font-size:22px;margin:0 0 10px;">Reading your answers…</h2>
+    <div class="progress" style="width:100%"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+    <div class="halo"><div class="ring"></div><div class="core"></div></div>
+    <h2 style="font-size:23px;margin:0 0 12px;font-weight:700">Reading your answers</h2>
     <p class="an-line" id="an-line">Comparing against 185M tracked working hours</p>
   </section>
 
-  <!-- 6 · Reveal + plans -->
+  <!-- 7 · Reveal + plans -->
   <section class="screen" id="s-reveal">
-    <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
     <div class="kicker">Your estimate</div>
-    <div class="big-number"><span id="lost-h">11</span><small> hrs/week</small></div>
-    <p style="color:var(--ink-2);font-size:17px;margin:10px 0 0;">
-      likely vanish into context switches and refocusing — <b>and you can't account for them.</b>
-    </p>
-    <div class="reveal-card">
+    <div class="bignum"><span id="lost-h">11</span><small> hrs / week</small></div>
+    <p class="reveal-lead">likely vanish into switching and refocusing, and right now <b>you can't account for them.</b></p>
+    <div class="card reveal-card">
       <p id="belief-line"></p>
-      <p>Daylook runs quietly on your Mac and writes the receipts — a readable timeline of what you actually did, every day:</p>
-      <div class="timeline-tease">
-        <div>09:15–10:00 <span>—</span> Debugging auth flow <span>· Cursor</span></div>
-        <div>10:00–10:20 <span>—</span> JWT rotation research <span>· Chrome</span></div>
-        <div>10:20–11:30 <span>—</span> PR review <span>· GitHub</span></div>
-        <div>11:30–11:45 <span>—</span> Slack spiral <span>· you'll see it</span></div>
+      <p>DayLook runs quietly on your Mac and writes the receipts. A warm, readable timeline of what you actually did, every day:</p>
+      <div class="tease">
+        <div>09:15 to 10:00 <span>·</span> Debugging auth flow <span>· Cursor</span></div>
+        <div>10:00 to 10:20 <span>·</span> JWT rotation research <span>· Chrome</span></div>
+        <div>10:20 to 11:30 <span>·</span> PR review <span>· GitHub</span></div>
+        <div>11:30 to 11:45 <span>·</span> the Slack spiral <span>· you will see it</span></div>
       </div>
-      <p style="margin-top:14px;">Private by design: screenshots and journal <b>never leave your Mac.</b> Ask it anything — "what did I do Tuesday?" — and get a real answer.</p>
+      <p>Private by design: your screenshots and journal <b class="warm">never leave your Mac.</b> Ask it anything, like "what did I do Tuesday?", and get a real answer.</p>
     </div>
 
-    <h3 style="margin:6px 0 0;font-size:20px;">Stop guessing. Start seeing.</h3>
-    <div class="plans">
+    <h3 class="plan-h">Stop guessing. Start seeing.</h3>
+    <p class="plan-sub">Cancel anytime. Most people start weekly and switch to yearly.</p>
+    <div class="plans" id="plans">
       <button class="plan" data-plan="week">
+        <span class="accent"></span>
         <span class="name">Weekly <small>try it properly</small></span>
-        <span class="price">$5<small>/week</small></span>
+        <span class="price">$5<small> / week</small></span>
       </button>
       <button class="plan" data-plan="month">
+        <span class="accent"></span>
         <span class="name">Monthly <small>most flexible</small></span>
-        <span class="price">$20<small>/month</small></span>
+        <span class="price">$20<small> / month</small></span>
       </button>
       <button class="plan best" data-plan="year">
         <span class="badge">BEST VALUE · SAVE 20%</span>
+        <span class="accent"></span>
         <span class="name">Yearly <small>$192 billed once a year</small></span>
-        <span class="price">$16<small>/month</small></span>
+        <span class="price">$16<small> / month</small></span>
       </button>
     </div>
     <div class="err" id="err"></div>
-    <p class="fine">Secure checkout by Stripe · cancel anytime · your data never leaves your Mac</p>
+    <p class="fine">Secure checkout by Stripe · your data never leaves your Mac</p>
   </section>
 
 </div>
@@ -218,20 +317,20 @@
 
   function go(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
+    const el = document.getElementById(id);
+    el.classList.add('active');
     window.scrollTo(0, 0);
     if (id === 's-an') runAnalysis();
   }
-
   function answer(key, value, next) { state[key] = value; go(next); }
 
-  // The "analyzing" beat: builds the Umax-style anticipation before the reveal.
+  // Anticipation beat before the reveal (Umax-style investment payoff).
   function runAnalysis() {
     const lines = [
       'Comparing against 185M tracked working hours',
-      'Estimating your daily context switches…',
-      'Applying the 23-minute refocus cost…',
-      'Building your loss estimate…',
+      'Estimating your daily context switches',
+      'Applying the 23-minute refocus cost',
+      'Building your loss estimate',
     ];
     const el = document.getElementById('an-line');
     let i = 0;
@@ -241,43 +340,49 @@
       clearInterval(t);
       computeReveal();
       go('s-reveal');
-    }, 900);
+    }, 850);
   }
 
   function computeReveal() {
-    // Deterministic, defensible-ish estimate: switches/day x 23.25min refocus, discounted
-    // (switch recovery overlaps real work), x5 days. Memory-blur adds untracked drift.
     const lost = Math.round((state.switches * 23.25 / 60) * 0.28 * 5 + state.memory * 1.5);
     document.getElementById('lost-h').textContent = Math.max(6, Math.min(19, lost));
-
     const b = document.getElementById('belief-line');
     if (state.belief === 0) {
-      b.innerHTML = 'You said you <b class="bad">don’t know</b> how much you focus. The measured average is just <b class="bad">2h 48m</b> a day — most people are shocked by their own number.';
+      b.innerHTML = 'You said you <b class="warm">do not know</b> how much you focus. The measured average is just <b class="warm">2h 48m</b> a day, and most people are stunned by their own number.';
     } else {
-      b.innerHTML = `You believe you focus <b>~${state.belief}h a day</b>. The measured average is <b class="bad">2h 48m</b> — the gap is where your weeks go.`;
+      b.innerHTML = 'You believe you focus <b>about ' + state.belief + 'h a day</b>. The measured average is <b class="warm">2h 48m</b>, and the gap is where your weeks quietly go.';
     }
   }
 
-  // Plans -> serverless checkout (Stripe). In test mode use card 4242 4242 4242 4242.
+  // Focus-dim: hovering one plan gently dims the others (kokonutui spotlight feel).
+  const plans = document.getElementById('plans');
+  plans.addEventListener('mouseover', e => { if (e.target.closest('.plan')) plans.classList.add('focusing'); });
+  plans.addEventListener('mouseleave', () => plans.classList.remove('focusing'));
+
+  // Magnetic 3D tilt on the plan cards.
+  document.querySelectorAll('.plan').forEach(card => {
+    card.addEventListener('mousemove', e => {
+      const r = card.getBoundingClientRect();
+      const px = (e.clientX - r.left) / r.width - 0.5;
+      const py = (e.clientY - r.top) / r.height - 0.5;
+      card.style.transform = `perspective(900px) rotateX(${(-py * 6).toFixed(2)}deg) rotateY(${(px * 7).toFixed(2)}deg) translateY(-2px)`;
+    });
+    card.addEventListener('mouseleave', () => { card.style.transform = ''; });
+  });
+
+  // Plan -> Stripe Checkout (same window; returns to the success page when done).
   document.querySelectorAll('.plan').forEach(btn => {
     btn.addEventListener('click', async () => {
       btn.style.opacity = '.6';
-      // Open the tab NOW, inside the click gesture, so popup blockers allow it; we'll
-      // point it at the Stripe URL once the checkout session comes back (or close it on error).
-      const tab = window.open('', '_blank');
       try {
         const r = await fetch('/api/checkout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ plan: btn.dataset.plan }),
         });
         const data = await r.json();
         if (!r.ok || !data.url) throw new Error(data.error || 'Checkout unavailable');
-        if (tab) tab.location = data.url;
-        else window.location = data.url;   // tab was blocked — fall back to same-window
-        btn.style.opacity = '1';
+        window.location = data.url;
       } catch (e) {
-        if (tab) tab.close();
         btn.style.opacity = '1';
         const err = document.getElementById('err');
         err.textContent = e.message + ' — is the site deployed with STRIPE_SECRET_KEY set?';

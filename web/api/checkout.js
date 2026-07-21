@@ -8,9 +8,9 @@
 // change needed to charge real money.
 
 const PLANS = {
-  week:  { amount: 500,   interval: "week",  name: "Contextline Weekly" },
-  month: { amount: 2000,  interval: "month", name: "Contextline Monthly" },
-  year:  { amount: 19200, interval: "year",  name: "Contextline Yearly ($16/mo)" },
+  week:  { amount: 500,   interval: "week",  name: "Daylook Weekly" },
+  month: { amount: 2000,  interval: "month", name: "Daylook Monthly" },
+  year:  { amount: 19200, interval: "year",  name: "Daylook Yearly ($16/mo)" },
 };
 
 export default async function handler(req, res) {
