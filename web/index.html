@@ -262,6 +262,9 @@
   document.querySelectorAll('.plan').forEach(btn => {
     btn.addEventListener('click', async () => {
       btn.style.opacity = '.6';
+      // Open the tab NOW, inside the click gesture, so popup blockers allow it; we'll
+      // point it at the Stripe URL once the checkout session comes back (or close it on error).
+      const tab = window.open('', '_blank');
       try {
         const r = await fetch('/api/checkout', {
           method: 'POST',
@@ -270,8 +273,11 @@
         });
         const data = await r.json();
         if (!r.ok || !data.url) throw new Error(data.error || 'Checkout unavailable');
-        window.location = data.url;
+        if (tab) tab.location = data.url;
+        else window.location = data.url;   // tab was blocked — fall back to same-window
+        btn.style.opacity = '1';
       } catch (e) {
+        if (tab) tab.close();
         btn.style.opacity = '1';
         const err = document.getElementById('err');
         err.textContent = e.message + ' — is the site deployed with STRIPE_SECRET_KEY set?';
