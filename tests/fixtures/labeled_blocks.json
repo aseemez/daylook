@@ -127,7 +127,7 @@
       "start": "2026-07-05T10:27:20",
       "end": "2026-07-05T10:42:20",
       "duration_seconds": 900,
-      "label": "Developing event grouping logic and drafting mock data fixtures for contextline project",
+      "label": "Developing event grouping logic and drafting mock data fixtures for daylook project",
       "category": "coding",
       "app_name": "Cursor",
       "source_event_ids": [

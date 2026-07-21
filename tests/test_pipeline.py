@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from contextline.agents.analyst import BatchAnalysis, LabeledBlock
-from contextline.agents.memory import MemoryAgent
-from contextline.capture_script.mock_generator import generate
-from contextline.pipeline import Pipeline
+from daylook.agents.analyst import BatchAnalysis, LabeledBlock
+from daylook.agents.memory import MemoryAgent
+from daylook.capture_script.mock_generator import generate
+from daylook.pipeline import Pipeline
 
 
 def _fake_analyze(batches, pending_dir=None, use_cache=True):
@@ -32,8 +32,8 @@ def _fake_analyze(batches, pending_dir=None, use_cache=True):
 
 
 def test_pipeline_processes_and_persists(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))  # pending + processed under tmp
-    from contextline import config
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))  # pending + processed under tmp
+    from daylook import config
     pending = config.pending_dir()
     generate(pending=pending, start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
 

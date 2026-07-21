@@ -11,7 +11,7 @@ import pathlib
 import subprocess
 import sys
 
-from contextline.agents.root import RootAgent
+from daylook.agents.root import RootAgent
 
 
 def _load_entry():
@@ -25,7 +25,7 @@ def _load_entry():
 
 
 def test_start_capture_uses_module_form_when_not_frozen(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     monkeypatch.delattr(sys, "frozen", raising=False)
     captured = {}
 
@@ -39,12 +39,12 @@ def test_start_capture_uses_module_form_when_not_frozen(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "Popen", _FakePopen)
     RootAgent().start_capture_process(dry_run=True)
-    assert captured["cmd"][1:3] == ["-m", "contextline.capture_script.real_capture"]
+    assert captured["cmd"][1:3] == ["-m", "daylook.capture_script.real_capture"]
     assert "--dry-run" in captured["cmd"]
 
 
 def test_start_capture_uses_capture_flag_when_frozen(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     captured = {}
 

@@ -1,5 +1,5 @@
 [project]
-name = "contextline"
+name = "daylook"
 version = "0.1.0"
 description = "A local work-journal that turns raw screen activity into a semantic daily timeline."
 readme = "README.md"
@@ -13,9 +13,9 @@ dependencies = [
 ]
 
 [project.scripts]
-# `contextline` launches the local app (server + browser). Same entry point the
+# `daylook` launches the local app (server + browser). Same entry point the
 # packaged .app runs via packaging/entry.py.
-contextline = "contextline.launcher:main"
+daylook = "daylook.launcher:main"
 
 [project.optional-dependencies]
 # Real capture script only — macOS-specific, not needed for the mock pipeline.
@@ -33,10 +33,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["contextline*"]
+include = ["daylook*"]
 
 [tool.setuptools.package-data]
-contextline = ["api/static/*"]
+daylook = ["api/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

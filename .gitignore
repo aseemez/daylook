@@ -15,7 +15,7 @@ env/
 !.env.example
 
 # Local runtime data (never commit captured screen data or the sqlite store)
-.contextline/
+.daylook/
 *.sqlite
 *.sqlite-*
 
@@ -55,3 +55,10 @@ dist/
 
 # Frozen-app verification scratch home
 .frozen_test_home/
+
+# Vercel (web/ funnel) — local project link + pulled env, never committed
+.vercel/
+.env*.local
+
+# Relay integration-test scratch data
+.relay_test_home/

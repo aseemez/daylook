@@ -11,7 +11,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from contextline.api.main import app, get_root
+from daylook.api.main import app, get_root
 
 
 class _FakeRoot:
@@ -24,11 +24,11 @@ def test_index_serves_chat_page():
     r = client.get("/")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
-    assert "Contextline" in r.text
+    assert "Daylook" in r.text
 
 
 def test_health(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     client = TestClient(app)
     r = client.get("/health")
     assert r.status_code == 200
@@ -39,7 +39,7 @@ def test_health(tmp_path, monkeypatch):
 
 
 def test_setup_reports_unconfigured_then_configured(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     for var in ("GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_GENAI_USE_VERTEXAI"):
         monkeypatch.delenv(var, raising=False)
     client = TestClient(app)
@@ -59,7 +59,7 @@ def test_setup_reports_unconfigured_then_configured(tmp_path, monkeypatch):
 
 
 def test_setup_requires_token(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     client = TestClient(app)
     r = client.post("/setup", json={})
     assert r.status_code == 422  # invite_token is required
@@ -67,8 +67,8 @@ def test_setup_requires_token(tmp_path, monkeypatch):
 
 def test_launcher_smoke(tmp_path, monkeypatch):
     """The build gate: --smoke boots the real server and confirms /health, returns 0."""
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))  # never touch the real home
-    from contextline import launcher
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))  # never touch the real home
+    from daylook import launcher
     assert launcher.main(["--smoke", "--no-browser"]) == 0
 
 
@@ -98,14 +98,14 @@ def test_chat_requires_message():
     os.environ.get("RUN_LLM_TESTS") != "1", reason="set RUN_LLM_TESTS=1 to run live model tests"
 )
 def test_chat_live_end_to_end(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
-    monkeypatch.setenv("CONTEXTLINE_USE_MCP", "0")
-    from contextline.capture_script.mock_generator import generate
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_USE_MCP", "0")
+    from daylook.capture_script.mock_generator import generate
     from datetime import datetime
     generate(start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
 
     # fresh Root against the temp home
-    import contextline.api.main as api
+    import daylook.api.main as api
     api._root = None
     client = TestClient(app)
     r = client.post("/chat", json={"message": "Process my day and show the journal."})

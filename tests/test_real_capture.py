@@ -13,9 +13,9 @@ from datetime import datetime
 
 from PIL import Image
 
-from contextline import config
-from contextline.capture_script import real_capture as rc
-from contextline.events import CaptureEvent, load_event
+from daylook import config
+from daylook.capture_script import real_capture as rc
+from daylook.events import CaptureEvent, load_event
 
 
 APP = ("Cursor", "auth.py — acme-api")
@@ -77,7 +77,7 @@ def test_write_event_matches_on_disk_contract(tmp_path):
 
     # schema is exactly the shared contract, and round-trips
     data = json.loads(sidecar.read_text())
-    assert set(data) == {"event_id", "timestamp", "app_name", "window_title"}
+    assert set(data) == {"event_id", "timestamp", "app_name", "window_title", "kind"}
     assert load_event(sidecar) == event
     assert isinstance(CaptureEvent.from_dict(data), CaptureEvent)
 

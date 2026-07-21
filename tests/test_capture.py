@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from contextline.agents.capture import CaptureAgent, batch_events
-from contextline.capture_script.mock_generator import generate
-from contextline.events import CaptureEvent
+from daylook.agents.capture import CaptureAgent, batch_events
+from daylook.capture_script.mock_generator import generate
+from daylook.events import CaptureEvent
 
 
 def _events(times_seconds: list[int]) -> list[CaptureEvent]:

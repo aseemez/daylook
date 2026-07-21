@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from contextline.agents import journalist
+from daylook.agents import journalist
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LLM_TESTS") != "1", reason="set RUN_LLM_TESTS=1 to run live model tests"
@@ -22,7 +22,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "labeled_blocks.json"
 
 
 def test_live_narrative_and_full_writeup(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))  # isolate cache
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))  # isolate cache
     day = json.loads(FIXTURE.read_text())
 
     narrative = journalist.write_narrative(day)

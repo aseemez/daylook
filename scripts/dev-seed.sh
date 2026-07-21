@@ -3,4 +3,4 @@
 set -euo pipefail
 source "$(dirname "$0")/dev-env.sh"
 cd "$(dirname "$0")/.."
-exec python -m contextline.capture_script.mock_generator "$@"
+exec python -m daylook.capture_script.mock_generator "$@"

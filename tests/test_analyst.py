@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from contextline.agents.analyst import (
+from daylook.agents.analyst import (
     _Group,
     _Grouping,
     compute_dwell,
     derive_blocks,
 )
-from contextline.events import CaptureEvent, EventBatch
+from daylook.events import CaptureEvent, EventBatch
 
 
 def _batch(specs: list[tuple[str, int]]) -> EventBatch:
@@ -121,7 +121,7 @@ def test_dwell_caps_idle_gaps():
     # a 2-hour gap between two events must not attribute 2 hours to the first
     batch = _batch([("Cursor", 0), ("Cursor", 120)])
     dwell = compute_dwell(list(batch.events))
-    from contextline import config
+    from daylook import config
     assert dwell["evt_0001"] == config.MAX_EVENT_DWELL_SECONDS
 
 

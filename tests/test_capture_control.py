@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import signal
 
-from contextline.agents.root import RootAgent
+from daylook.agents.root import RootAgent
 
 
 class FakeProc:
@@ -43,12 +43,12 @@ def _patch_popen(monkeypatch):
         created.append(cmd)
         return FakeProc()
 
-    monkeypatch.setattr("contextline.agents.root.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("daylook.agents.root.subprocess.Popen", fake_popen)
     return created
 
 
 def test_capture_lifecycle(monkeypatch, tmp_path):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     created = _patch_popen(monkeypatch)
     root = RootAgent()
 
@@ -75,7 +75,7 @@ def test_capture_lifecycle(monkeypatch, tmp_path):
 
 
 def test_dry_run_flag_passed(monkeypatch, tmp_path):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     created = _patch_popen(monkeypatch)
     root = RootAgent()
 
@@ -85,7 +85,7 @@ def test_dry_run_flag_passed(monkeypatch, tmp_path):
 
 
 def test_stop_sends_sigint(monkeypatch, tmp_path):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     _patch_popen(monkeypatch)
     root = RootAgent()
 

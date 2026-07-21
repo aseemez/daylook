@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Contextline.app with PyInstaller in a dedicated Python 3.13 env.
+# Build Daylook.app with PyInstaller in a dedicated Python 3.13 env.
 #
 # Why a separate env: PyInstaller against Python 3.14 is unproven here, and we pin the exact
 # google-genai / google-adk versions the pipeline was validated on so a silent upstream change
@@ -7,7 +7,7 @@
 #
 #   packaging/build.sh            # full build + smoke test
 #
-# Output: dist/Contextline.app
+# Output: dist/Daylook.app
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,24 +24,24 @@ fi
 PY="$BUILD_VENV/bin/python"
 
 echo "==> Installing pinned deps + project (with capture extras) + PyInstaller"
-# --reinstall-package contextline is load-bearing: the project version rarely changes, so without
+# --reinstall-package daylook is load-bearing: the project version rarely changes, so without
 # it uv would consider the already-installed copy "satisfied" and skip picking up local source
 # edits (e.g. the baked-in relay URL) — silently shipping a stale bundle.
-uv pip install --python "$PY" --reinstall-package contextline \
+uv pip install --python "$PY" --reinstall-package daylook \
     "google-adk==2.3.0" \
     "google-genai==2.10.0" \
     "pyinstaller>=6.6" \
     ".[capture]"
 
 echo "==> Cleaning previous build artifacts"
-rm -rf build/pyi dist/Contextline dist/Contextline.app
+rm -rf build/pyi dist/Daylook dist/Daylook.app
 
 echo "==> Running PyInstaller"
-"$BUILD_VENV/bin/pyinstaller" packaging/contextline.spec \
+"$BUILD_VENV/bin/pyinstaller" packaging/daylook.spec \
     --noconfirm --distpath dist --workpath build/pyi
 
-APP="dist/Contextline.app"
-BIN="$APP/Contents/MacOS/Contextline"
+APP="dist/Daylook.app"
+BIN="$APP/Contents/MacOS/Daylook"
 if [[ ! -x "$BIN" ]]; then
     echo "!! Build failed: $BIN not found" >&2
     exit 1
@@ -50,7 +50,7 @@ fi
 echo "==> Smoke-testing the frozen app (boots server, checks /health)"
 # Point at a throwaway home so the smoke run never touches the real journal.
 SMOKE_HOME="$(mktemp -d)"
-if CONTEXTLINE_HOME="$SMOKE_HOME" "$BIN" --smoke --no-browser; then
+if DAYLOOK_HOME="$SMOKE_HOME" "$BIN" --smoke --no-browser; then
     echo "==> Smoke test PASSED"
 else
     echo "!! Smoke test FAILED — the bundle boots but /health did not answer" >&2

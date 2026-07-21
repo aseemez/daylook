@@ -12,9 +12,9 @@ from datetime import datetime
 
 import pytest
 
-from contextline.agents.analyst import analyze_batch
-from contextline.agents.capture import batch_events
-from contextline.capture_script.mock_generator import generate
+from daylook.agents.analyst import analyze_batch
+from daylook.agents.capture import batch_events
+from daylook.capture_script.mock_generator import generate
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LLM_TESTS") != "1", reason="set RUN_LLM_TESTS=1 to run live model tests"
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_analyst_produces_valid_blocks_and_caches(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))  # isolate cache + data
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))  # isolate cache + data
     pending = tmp_path / "pending"
     events = generate(pending=pending, start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
     small = events[:3]

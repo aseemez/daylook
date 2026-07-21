@@ -1,6 +1,6 @@
 """Tests for user settings + the env translation the launcher/app relies on.
 
-Hermetic: each test points CONTEXTLINE_HOME at a tmp dir and neutralizes the three model-routing
+Hermetic: each test points DAYLOOK_HOME at a tmp dir and neutralizes the three model-routing
 env vars via monkeypatch so apply_to_env's direct os.environ writes are reverted at teardown.
 """
 
@@ -10,12 +10,12 @@ import json
 
 import pytest
 
-from contextline import settings
+from daylook import settings
 
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     # snapshot + auto-restore whatever apply_to_env touches
     for var in ("GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_GENAI_USE_VERTEXAI"):
         monkeypatch.delenv(var, raising=False)
@@ -59,7 +59,7 @@ def test_apply_to_env_relay_mode(monkeypatch):
     assert os.environ["GOOGLE_API_KEY"] == "cl_tok"
     assert os.environ["GOOGLE_GEMINI_BASE_URL"] == "https://relay.example"
     assert os.environ["GOOGLE_GENAI_USE_VERTEXAI"] == "FALSE"
-    assert os.environ["CONTEXTLINE_USE_MCP"] == "0"
+    assert os.environ["DAYLOOK_USE_MCP"] == "0"
 
 
 def test_apply_to_env_own_key_mode_no_base_url():

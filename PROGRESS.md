@@ -1,60 +1,122 @@
-# Contextline — Progress & Handoff
+# Daylook — Progress & Handoff
 
 > Living status doc for whoever (human or agent) picks this up next. CLAUDE.md is the
 > spec / source of truth; **this file is the current state of the world**. Read both.
-> Last updated: 2026-07-09 — release track: profile separation, web UI, shared-Gemini relay, Mac `.app`, landing page.
+> Last updated: 2026-07-21 — production track: paid-user plan, free-tier dev key, relay API-key upstream.
 
 ## TL;DR
 
-**All 10 build steps are complete, real screen capture is proven LIVE, and the project now also
-runs in the `adk web` dev UI with in-chat start/stop of real capture.** The pipeline works end to
-end against real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, serves over HTTP, and
-ingests **real screenshots of the user's actual screen**, not just mock data. Tests: **51 passed,
-6 skipped** (skips are opt-in live-LLM tests + MCP-needs-npx). Tests now **65 passed, 6 skipped**
-after the release work below.
+**All 10 build steps are complete, real screen capture is proven LIVE, distribution is built
+(relay deployed + `.app`/`.dmg` + landing page), and the project is now being hardened for
+~10 paying macOS users.** Pipeline scores **5/5 on `eval.py`**; tests **65 passed, 6 skipped**
+(skips are opt-in live-LLM tests + MCP-needs-npx). The decided production plan (platform, billing,
+payments) lives in **CLAUDE.md → "Production plan"**; the ship-and-charge runbook is
+**`DISTRIBUTION.md`**; the owner's self-check list is **`VERIFY.md`**.
 
-### Release track — 2026-07-08/09 (committed locally on `main`, NOT yet pushed)
+### Production track — 2026-07-21 (this session; replaces the old `progress2.md`/`instruction.md`)
+
+Decisions (made with the owner — don't re-open): **macOS only** for now (Windows = later port of
+the capture layer only) · **relay + owner's Gemini API key** for production AI billing (the
+wrapper-SaaS pattern; Vertex/ADC-on-trial-credits is the legacy mode) · **Stripe Payment Link +
+manual token issuance** for payments at n≈10 · free-tier AI Studio key for all dev/testing.
+
+Done this session:
+- **Dev off Vertex/ADC**: `.env` / `.env.example` now use `GOOGLE_GENAI_USE_VERTEXAI=FALSE` +
+  `GOOGLE_API_KEY` (free-tier AI Studio). ⚠️ **`.env` holds a placeholder — the owner must paste a
+  real key** (aistudio.google.com/apikey) before live dev runs. `config.model_configured()` added
+  (either route); `/health` reports it.
+- **Relay production seam**: `relay/main.py` gained a `GEMINI_API_KEY` upstream mode (forwards to
+  the Gemini Developer API with the server-side key; ADC/Vertex remains the fallback). `/healthz`
+  reports which upstream is active. **Not yet redeployed** — the live Cloud Run revision still runs
+  vertex-adc (verified answering 2026-07-21) and 404s on `/healthz` (predates it).
+- **Docs rewritten** around the plan: CLAUDE.md (auth + production plan + status), README (free-key
+  setup), DISTRIBUTION.md (how wrapper SaaS charge, Stripe, both relay modes), VERIFY.md (was
+  `instruction.md`); `progress2.md` deleted (folded here); duplicate diagram exports removed
+  (`architecture.mmd` + `architecture.png` kept).
+
+Later the same day, two owner directives reshaped product + pricing:
+
+- **Hybrid capture** (owner: switch-only misses what people do *throughout* the day). Events now
+  carry `kind: "switch" | "heartbeat"`; `real_capture.py` emits a heartbeat every
+  `config.HEARTBEAT_SECONDS` (12s) once the debounce has committed a window (pure helper
+  `heartbeat_due`, `--heartbeat` flag, 0 disables). Cost is held flat by two deterministic rules:
+  `batch_events` counts only *switches* toward `MAX_BATCH_EVENTS` (plus a `MAX_BATCH_TOTAL_EVENTS`
+  = 400 absolute cap), and the Analyst's new `select_keyframes` sends at most
+  `MAX_IMAGES_PER_BATCH` (12) screenshots per vision call — every switch + evenly-sampled
+  heartbeats; the rest ride as text metadata. So a heartbeat-dense focus hour ≈ one vision call,
+  ~$1–3/user/month on Flash. Analyst `PROMPT_VERSION` → `analyst-v2` (old cache correctly
+  invalidated; **first eval rerun needs a real `GOOGLE_API_KEY` pasted into `.env`**). Backward
+  compatible: `kind` defaults to `"switch"`, all old sidecars/fixtures load unchanged; mock
+  generator gained `--heartbeats N`. Tests **78 passed, 6 skipped** (new `tests/test_heartbeats.py`).
+- **Paid from day 1 — no free tier** (supersedes the "$0 for 50 friends" framing). Three Stripe
+  Payment Links: **$5/week, $20/month, $16/month billed yearly ($192/yr)**. Manual token
+  fulfillment at n≈10. Product bar is "Cursor-grade" (pay → download → paste code → just works);
+  the prioritized smoothness checklist is in `DISTRIBUTION.md` §5 (launch gate: paid-key relay
+  redeploy + signed app).
+
+Third pass the same day — **the web funnel** (owner wants to experience the product as a
+stranger would, end to end, on free/student tiers, with Stripe test mode):
+
+- **`web/`** — self-contained onboarding funnel for **Vercel Hobby** (free; no build step, no npm
+  deps). Umax-style flow: scary-stats hook (2h48m/23min/47× — RescueTime + Gloria Mark, cited) →
+  3-question quiz (investment) → "analyzing" beat → personalized "you lose ~N hrs/week" reveal →
+  3 plan cards → `api/checkout.js` (Stripe Checkout Session via raw REST, **inline price_data** so
+  the Stripe dashboard needs zero setup) → `success.html` + `api/success.js` (server-side payment
+  verification, then deterministically hands an invite code from `INVITE_TOKEN_POOL`) → download +
+  4 install steps. Same journal palette as the app. Function logic smoke-tested (config/input
+  errors clean; fake key correctly relays Stripe's own error, proving the REST path).
+- **Supersedes** `docs/` GitHub Pages as the front door. Deploy runbook: `web/README.md`
+  (vercel login/deploy, `STRIPE_SECRET_KEY` test key + `INVITE_TOKEN_POOL` env vars, test card
+  4242…). Token pool must be a subset of the relay's `INVITE_TOKENS`.
+
+Still outward-facing / owner's go needed: **`vercel login` + deploy of `web/`** (interactive),
+Stripe test-mode secret key into Vercel env, relay **redeploy** (API-key mode),
+`gh release create` (the success page's download button needs it), `scripts/archive-real-home.sh`,
+and the $99 Apple Developer ID (launch gate). Standing flag: plaintext `STRIPE_SECRET_KEY` in
+`~/.zshrc` — do NOT reuse it for the funnel; mint a fresh **test** key.
+
+### Release track — 2026-07-08/09 (deployed + pushed; historical)
 
 Goal: hand the app to the first ~50 users for **$0**, sharing the owner's Gemini access safely.
 Plan of record: `~/.claude/plans/linked-conjuring-cookie.md` (6 phases). Full runbook: **`DISTRIBUTION.md`**.
 
 - **Phase 0 — profile separation** ✅. Dev/test now lives in a repo-local, gitignored `.dev_home`;
-  `~/.contextline` is real-data-only. Wrappers `scripts/dev-{env,seed,api,adk-web}.sh`;
+  `~/.daylook` is real-data-only. Wrappers `scripts/dev-{env,seed,api,adk-web}.sh`;
   one-time `scripts/archive-real-home.sh` (**not run yet** — waits on the user). CLAUDE.md gained
-  a "Data profiles" section: **agent sessions must never write to `~/.contextline` uninvited.**
-- **Phase 1 — web chat UI** ✅. `contextline/api/static/index.html` — a self-contained, polished
+  a "Data profiles" section: **agent sessions must never write to `~/.daylook` uninvited.**
+- **Phase 1 — web chat UI** ✅. `daylook/api/static/index.html` — a self-contained, polished
   journal-styled chat page (not the raw FastAPI look), served at `GET /`. Renders the Journalist
   writeup into a visual timeline.
-- **Phase 2 — relay** ⏳ *code done, deploy deferred*. `relay/` FastAPI proxy: invite token in
-  `x-goog-api-key`, model-locked to flash, per-token daily quota, forwards to Vertex with the Cloud
-  Run service account's ADC. **Proven end-to-end locally** (dev ADC, incl. a 202 KB vision batch;
-  401/403/429 all correct). **`gcloud run deploy` is an outward-facing action still awaiting the
-  user's go-ahead**; after deploy, set `settings.DEFAULT_RELAY_URL` to the Cloud Run URL.
-- **Phase 3 — client wiring** ✅. `contextline/settings.py` (`<home>/settings.json`, `relay` vs
-  `own_key` mode, `apply_to_env`), `contextline/launcher.py` (packaged entry, picks a port, opens
+- **Phase 2 — relay** ✅ *deployed 2026-07-09* (`71d34f0`). `relay/` FastAPI proxy: invite token in
+  `x-goog-api-key`, model-locked to flash, per-token daily quota, forwards upstream with the relay's
+  own credentials. Live at `https://contextline-relay-862472415362.us-central1.run.app`, proven
+  end-to-end (valid token → 200, bad token → 401, non-flash model → 403; re-verified 2026-07-21).
+  `settings.DEFAULT_RELAY_URL` carries the URL. 50 tokens in gitignored `relay/tokens.txt`.
+- **Phase 3 — client wiring** ✅. `daylook/settings.py` (`<home>/settings.json`, `relay` vs
+  `own_key` mode, `apply_to_env`), `daylook/launcher.py` (packaged entry, picks a port, opens
   browser after `/health`, `--smoke`), and `GET/POST /setup` for the first-run invite card. First-run
   flow proven: unconfigured → /setup → /chat routes through the relay with **no restart** (ADK builds
   its client lazily).
-- **Phase 4 — Mac `.app`** ✅. `packaging/{contextline.spec,entry.py,build.sh,make_dmg.sh}`. Built
+- **Phase 4 — Mac `.app`** ✅. `packaging/{daylook.spec,entry.py,build.sh,make_dmg.sh}`. Built
   a working **97 MB `.app`** and **52 MB `.dmg`** on Python 3.13.7 (frozen bundle boots, serves the
   UI, capture dry-run works, routes through the relay). `config.py` skips `.env` when frozen;
   `root.py` re-launches the bundle with `--capture` when frozen. `tests/test_packaging.py` locks the
   seams. arm64-only, **unsigned** (Gatekeeper "Open Anyway" — signing is the money-later Mac step).
 - **Phase 5 — landing + release** ⏳. `docs/index.html` (+ `.nojekyll`) landing page with the
   Download button and install walkthrough; `DISTRIBUTION.md` runbook written. **Remaining (all
-  outward-facing, deferred to the user): `gh release create v0.1.0 dist/Contextline.dmg`, enable
+  outward-facing, deferred to the user): `gh release create v0.1.0 dist/Daylook.dmg`, enable
   GitHub Pages, and `git push`.**
 
 ### New since 2026-07-05 (this session's work — all pushed to `main`)
-- **`adk web` support** (`2208438`). New package `adk_web/contextline_agent/` exposes a
+- **`adk web` support** (`2208438`). New package `adk_web/daylook_agent/` exposes a
   module-level `root_agent` (via `RootAgent().build_llm_agent()`) so the ADK dev UI can drive the
   same underlying `LlmAgent` with its own runner/session service. **Run it as `adk web adk_web`
-  from the repo root** — NOT bare `adk web` (that lists the code packages `contextline`/`tests`
-  too; only `contextline_agent` is the agent). Session refinements work unchanged via
+  from the repo root** — NOT bare `adk web` (that lists the code packages `daylook`/`tests`
+  too; only `daylook_agent` is the agent). Session refinements work unchanged via
   `tool_context.state`.
 - **In-chat start/stop of real capture** (`01f6bb8`). RootAgent gained `start_capture_process` /
   `stop_capture_process` / `capture_status` (subprocess mgmt: spawns `python -m
-  contextline.capture_script.real_capture`, graceful **SIGINT** on stop → terminate → kill,
+  daylook.capture_script.real_capture`, graceful **SIGINT** on stop → terminate → kill,
   idempotent). Exposed to the chat as `start_capture(minutes)` / `stop_capture()` tools, so the
   user can say "start tracking my screen" / "stop" from the dev UI. **Still consent-gated** — the
   tool records the real screen; the agent only calls it on a clear request.
@@ -73,7 +135,7 @@ reads the **CGWindowList on-screen z-order** (fresh each poll); a live 2-min cap
 logged Safari, VS Code, Simplenote, Weather, and Terminal as distinct blocks. Also added
 `--minutes N` (optional auto-stop; omit to run until Ctrl-C).
 
-Repo: https://github.com/aseemez/contextline — `main` clean and **pushed** (latest `2208438`).
+Repo: https://github.com/aseemez/daylook — `main` clean and **pushed** (latest `2208438`).
 The **whole capstone is presentation-ready** (user is showing it to judges).
 
 ## Environment (verified working — do not re-litigate)
@@ -91,7 +153,7 @@ The **whole capstone is presentation-ready** (user is showing it to judges).
 | # | Step | State | Notes |
 |---|------|-------|-------|
 | 1 | Mock capture generator | ✅ | `capture_script/mock_generator.py`. 30-event realistic dev morning (09:02–10:56), Pillow-rendered synthetic JPEGs — **not** fetched from the internet, fully local. |
-| 2 | Capture Agent | ✅ | `agents/capture.py` + `agents/capture_mcp.py`. Deterministic batching (idle-gap/size/span). **Real MCP filesystem read path** (`@modelcontextprotocol/server-filesystem` via npx), verified byte-identical to the plain-filesystem fallback. MCP toggled via `CONTEXTLINE_USE_MCP`. |
+| 2 | Capture Agent | ✅ | `agents/capture.py` + `agents/capture_mcp.py`. Deterministic batching (idle-gap/size/span). **Real MCP filesystem read path** (`@modelcontextprotocol/server-filesystem` via npx), verified byte-identical to the plain-filesystem fallback. MCP toggled via `DAYLOOK_USE_MCP`. |
 | 3 | Analyst Agent | ✅ | `agents/analyst.py`. Only agent that sees images. LLM **only groups/labels**; all facts (times, durations, app_name, source_event_ids) are **derived deterministically in code** → anti-hallucination by construction. Cached vision calls. |
 | 4 | Journalist Agent | ✅ | `agents/journalist.py`. LLM narrative (cached, refinement-aware) + deterministic timeline/stats formatting. |
 | 5 | Memory Agent + SQLite | ✅ | `agents/memory.py`, `storage/sqlite.py`. Schema per CLAUDE.md (`days`, `blocks` with `source_event_ids JSON`). Idempotent save; ADK function-tools for historical queries. |
@@ -130,7 +192,7 @@ Optional future polish (not required): treat window-*title* changes within an ap
 a `blocks`-level DB migration test; streaming API responses.
 
 ### Demo recipe (the user is presenting to judges)
-1. `python -m contextline.capture_script.real_capture --minutes 5` (or no `--minutes`, Ctrl-C to stop).
+1. `python -m daylook.capture_script.real_capture --minutes 5` (or no `--minutes`, Ctrl-C to stop).
 2. Spend **30–60s per app in separate full windows**, Cmd-Tab between 4–6 apps (short dwell → tiny
    durations; the 2-min test showed "0m" blocks purely because each app got only seconds).
 3. Ask the pipeline "What did I do today?" via `/chat` (or the RootAgent) → agents produce the journal.
@@ -142,11 +204,11 @@ a `blocks`-level DB migration test; streaming API responses.
 - **`process_today` blends everything in `pending/`.** If mock events (from `mock_generator.py`)
   and real-capture events both sit in `pending/`, the journal mixes them and looks "half real, half
   fake" — this is NOT hallucination, it's leftover data. **Before a real-capture demo, make sure
-  `~/.contextline/pending/` and `processed/` are empty** (and there's no stale journal row for the
+  `~/.daylook/pending/` and `processed/` are empty** (and there's no stale journal row for the
   target date in `journal.sqlite`). We hit exactly this and it read as a hallucination bug.
 - **App names are ALWAYS from the live macOS window list**, never invented by the model. If an app
   you didn't use shows up (e.g. an old "Weather" block), it came from an *earlier* capture session's
-  events still on disk — check `~/.contextline/capture.log` for which session actually logged it
+  events still on disk — check `~/.daylook/capture.log` for which session actually logged it
   before blaming the model. Don't delete the evidence before diagnosing.
 - Processing moves events `pending/ → processed/`, so a second "what did I do today?" finds nothing
   new. Re-seed or ask about the saved day when re-demoing.
@@ -185,13 +247,13 @@ polish items above (window-title sub-switches, streaming API).
 
 ```bash
 # from repo root, venv active, .env present
-python -m contextline.capture_script.mock_generator   # seed fake events into ~/.contextline/pending
-python -m contextline.capture_script.real_capture --minutes 5   # REAL screen capture (macOS, consent-gated)
+python -m daylook.capture_script.mock_generator   # seed fake events into ~/.daylook/pending
+python -m daylook.capture_script.real_capture --minutes 5   # REAL screen capture (macOS, consent-gated)
 python eval.py                                         # score the 5 criteria (free after first run)
 pytest                                                 # 51 passed, 6 skipped
 RUN_LLM_TESTS=1 pytest                                 # include live-model tests (first run costs)
-uvicorn contextline.api.main:app --reload             # then POST /chat, GET /health
-adk web adk_web                                        # ADK dev UI → pick "contextline_agent" (NOT bare `adk web`)
+uvicorn daylook.api.main:app --reload             # then POST /chat, GET /health
+adk web adk_web                                        # ADK dev UI → pick "daylook_agent" (NOT bare `adk web`)
 ```
 
 In the dev UI you can chat naturally: "process today", "what did I do today?", a refinement like

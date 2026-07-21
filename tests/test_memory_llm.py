@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from contextline.agents.memory import MemoryAgent
+from daylook.agents.memory import MemoryAgent
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LLM_TESTS") != "1", reason="set RUN_LLM_TESTS=1 to run live model tests"

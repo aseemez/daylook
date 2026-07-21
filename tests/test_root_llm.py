@@ -2,7 +2,7 @@
 
 Skipped unless ``RUN_LLM_TESTS=1``. Drives a real conversation through the Root: process the
 day, ask about it, then set a mid-session refinement and confirm it's stored in session state
-(the mechanism behind eval criterion 5). Uses a temp CONTEXTLINE_HOME so it's isolated.
+(the mechanism behind eval criterion 5). Uses a temp DAYLOOK_HOME so it's isolated.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_root_conversation_and_refinement(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
-    monkeypatch.setenv("CONTEXTLINE_USE_MCP", "0")
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_USE_MCP", "0")
 
-    from contextline.capture_script.mock_generator import generate
-    from contextline.agents.memory import MemoryAgent
-    from contextline.agents.root import RootAgent
+    from daylook.capture_script.mock_generator import generate
+    from daylook.agents.memory import MemoryAgent
+    from daylook.agents.root import RootAgent
 
     generate(start=datetime(2026, 7, 5, 9, 0, 0), clean=True)  # into tmp pending
 

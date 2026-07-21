@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daylook — Where did your day actually go?</title>
+<meta name="description" content="Daylook turns your screen activity into a readable daily timeline. Find out where your hours actually go.">
+<style>
+  /* Same journal palette as the app + docs page, so the funnel feels like the product. */
+  :root {
+    --bg: #f6f5f1; --surface: #ffffff; --surface-2: #fbfaf7;
+    --ink: #23221f; --ink-2: #56534c; --muted: #928e85;
+    --line: #e7e4dd; --accent: #3f6b4d; --accent-2: #57906a; --accent-soft: #e9f0ea;
+    --danger: #b3564f; --danger-soft: #f7ebea; --amber: #9a6a15;
+    --shadow: 0 1px 2px rgba(30,28,24,.05), 0 12px 32px rgba(30,28,24,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --surface: #201e1c; --surface-2: #262320;
+      --ink: #ece9e2; --ink-2: #bcb8af; --muted: #8b877e;
+      --line: #322f2b; --accent: #6f9a78; --accent-2: #8ab894; --accent-soft: #232c25;
+      --danger: #d98a83; --danger-soft: #322422; --amber: #d6a94f;
+      --shadow: 0 1px 2px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 0 22px; }
+  h1, h2, h3 { letter-spacing: -.4px; line-height: 1.2; }
+  .screen { display: none; min-height: 100svh; flex-direction: column; justify-content: center; padding: 48px 0; }
+  .screen.active { display: flex; animation: fadein .35s ease; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .brand { font-weight: 700; font-size: 15px; letter-spacing: .2px; color: var(--ink-2); margin-bottom: 28px; }
+  .brand span { color: var(--accent); }
+
+  .kicker { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.2px; color: var(--danger); margin-bottom: 10px; }
+  .hero h1 { font-size: clamp(30px, 6vw, 44px); margin: 0 0 16px; }
+  .hero p.lede { font-size: 18px; color: var(--ink-2); margin: 0 0 8px; }
+  .stat-strip { display: flex; gap: 12px; margin: 28px 0 32px; flex-wrap: wrap; }
+  .stat { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .stat b { display: block; font-size: 22px; color: var(--danger); letter-spacing: -.5px; }
+  .stat small { color: var(--muted); font-size: 12.5px; line-height: 1.4; display: block; }
+
+  .btn {
+    display: inline-block; border: 0; cursor: pointer; text-decoration: none; text-align: center;
+    background: var(--accent); color: #fff; font: 600 16px/1 inherit; font-family: inherit;
+    padding: 15px 26px; border-radius: 12px; box-shadow: var(--shadow); transition: transform .08s ease, background .15s ease;
+  }
+  .btn:hover { background: var(--accent-2); }
+  .btn:active { transform: scale(.98); }
+  .btn.block { display: block; width: 100%; }
+  .ghost { background: none; border: 0; color: var(--muted); font: 500 14px inherit; font-family: inherit; cursor: pointer; margin-top: 14px; }
+
+  .progress { display: flex; gap: 6px; margin-bottom: 30px; }
+  .progress i { height: 4px; flex: 1; border-radius: 2px; background: var(--line); }
+  .progress i.on { background: var(--accent); }
+
+  .q h2 { font-size: clamp(24px, 5vw, 32px); margin: 0 0 6px; }
+  .q .sub { color: var(--muted); margin: 0 0 24px; font-size: 15px; }
+  .opts { display: grid; gap: 10px; }
+  .opt {
+    text-align: left; background: var(--surface); color: var(--ink); border: 1.5px solid var(--line);
+    border-radius: 14px; padding: 16px 18px; font: 500 16px/1.45 inherit; font-family: inherit; cursor: pointer;
+    transition: border-color .12s ease, transform .08s ease;
+  }
+  .opt:hover { border-color: var(--accent-2); }
+  .opt:active { transform: scale(.99); }
+  .opt small { display: block; color: var(--muted); font-size: 13px; }
+
+  /* analyzing */
+  .an { text-align: center; }
+  .ring { width: 74px; height: 74px; margin: 0 auto 26px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--accent); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .an-line { color: var(--muted); font-size: 15px; min-height: 24px; }
+
+  /* reveal */
+  .big-number { font-size: clamp(56px, 14vw, 88px); font-weight: 800; letter-spacing: -3px; color: var(--danger); line-height: 1; }
+  .big-number small { font-size: clamp(20px, 4vw, 26px); font-weight: 700; letter-spacing: -.5px; }
+  .reveal-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px; margin: 22px 0; box-shadow: var(--shadow); }
+  .reveal-card p { margin: 8px 0; color: var(--ink-2); }
+  .reveal-card b.bad { color: var(--danger); }
+  .timeline-tease { border-left: 3px solid var(--accent); padding-left: 14px; margin: 18px 0 4px; filter: blur(0); }
+  .timeline-tease div { font: 500 14.5px/2 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .timeline-tease div span { color: var(--muted); }
+  .cite { color: var(--muted); font-size: 12px; margin-top: 14px; }
+
+  /* plans */
+  .plans { display: grid; gap: 12px; margin: 24px 0 8px; }
+  .plan {
+    position: relative; background: var(--surface); border: 1.5px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; cursor: pointer; display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    font-family: inherit; text-align: left; transition: border-color .12s ease;
+  }
+  .plan:hover { border-color: var(--accent-2); }
+  .plan.best { border-color: var(--accent); background: var(--accent-soft); }
+  .plan .name { font-weight: 700; font-size: 16px; color: var(--ink); }
+  .plan .name small { display: block; font-weight: 500; color: var(--muted); font-size: 13px; }
+  .plan .price { font-weight: 800; font-size: 20px; color: var(--ink); letter-spacing: -.5px; white-space: nowrap; }
+  .plan .price small { font-weight: 500; font-size: 12.5px; color: var(--muted); }
+  .badge { position: absolute; top: -10px; right: 14px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .6px; padding: 3px 10px; border-radius: 99px; }
+  .fine { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 16px; }
+  .err { display: none; color: var(--danger); background: var(--danger-soft); border-radius: 10px; padding: 10px 14px; margin-top: 14px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 1 · Hook -->
+  <section class="screen hero active" id="s-hero">
+    <div class="brand">context<span>line</span></div>
+    <div class="kicker">The uncomfortable truth about your workday</div>
+    <h1>You worked 8 hours yesterday.<br>Can you say what you did?</h1>
+    <p class="lede">Most people can't — and it's costing them more than they think.</p>
+    <div class="stat-strip">
+      <div class="stat"><b>2h 48m</b><small>of real focus in an average 8-hour day — the rest evaporates¹</small></div>
+      <div class="stat"><b>23 min</b><small>to fully refocus after every single interruption²</small></div>
+      <div class="stat"><b>47×</b><small>the average worker switches context per day²</small></div>
+    </div>
+    <button class="btn" onclick="go('s-q1')">Find out where your day goes →</button>
+    <p class="cite">¹ RescueTime, analysis of 185M working hours &nbsp;² Dr. Gloria Mark, UC Irvine</p>
+  </section>
+
+  <!-- 2 · Q1 -->
+  <section class="screen q" id="s-q1">
+    <div class="progress"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+    <h2>How many hours a day do you <em>feel</em> truly focused?</h2>
+    <p class="sub">Gut answer — nobody's checking.</p>
+    <div class="opts">
+      <button class="opt" onclick="answer('belief', 6, 's-q2')">5–6+ hours <small>locked in most of the day</small></button>
+      <button class="opt" onclick="answer('belief', 4, 's-q2')">3–4 hours <small>solid, with some drift</small></button>
+      <button class="opt" onclick="answer('belief', 2, 's-q2')">1–2 hours <small>the rest is a scramble</small></button>
+      <button class="opt" onclick="answer('belief', 0, 's-q2')">Honestly, no idea <small>that's kind of the problem</small></button>
+    </div>
+  </section>
+
+  <!-- 3 · Q2 -->
+  <section class="screen q" id="s-q2">
+    <div class="progress"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div>
+    <h2>Quick: what did you actually do last Tuesday?</h2>
+    <p class="sub">Not your calendar. What you really spent the hours on.</p>
+    <div class="opts">
+      <button class="opt" onclick="answer('memory', 0, 's-q3')">I could walk you through it</button>
+      <button class="opt" onclick="answer('memory', 1, 's-q3')">A rough idea, big blocks only</button>
+      <button class="opt" onclick="answer('memory', 2, 's-q3')">It's a blur, like most days</button>
+    </div>
+  </section>
+
+  <!-- 4 · Q3 -->
+  <section class="screen q" id="s-q3">
+    <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div>
+    <h2>Mid-task, how often do you flick to Slack, email, or your phone?</h2>
+    <p class="sub">Every flick costs ~23 minutes of full focus to undo.</p>
+    <div class="opts">
+      <button class="opt" onclick="answer('switches', 18, 's-an')">Rarely — I protect my blocks</button>
+      <button class="opt" onclick="answer('switches', 32, 's-an')">Every hour or so</button>
+      <button class="opt" onclick="answer('switches', 47, 's-an')">Every few minutes <small>it's a reflex at this point</small></button>
+    </div>
+  </section>
+
+  <!-- 5 · Analyzing -->
+  <section class="screen an" id="s-an">
+    <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+    <div class="ring"></div>
+    <h2 style="font-size:22px;margin:0 0 10px;">Reading your answers…</h2>
+    <p class="an-line" id="an-line">Comparing against 185M tracked working hours</p>
+  </section>
+
+  <!-- 6 · Reveal + plans -->
+  <section class="screen" id="s-reveal">
+    <div class="progress"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    <div class="kicker">Your estimate</div>
+    <div class="big-number"><span id="lost-h">11</span><small> hrs/week</small></div>
+    <p style="color:var(--ink-2);font-size:17px;margin:10px 0 0;">
+      likely vanish into context switches and refocusing — <b>and you can't account for them.</b>
+    </p>
+    <div class="reveal-card">
+      <p id="belief-line"></p>
+      <p>Daylook runs quietly on your Mac and writes the receipts — a readable timeline of what you actually did, every day:</p>
+      <div class="timeline-tease">
+        <div>09:15–10:00 <span>—</span> Debugging auth flow <span>· Cursor</span></div>
+        <div>10:00–10:20 <span>—</span> JWT rotation research <span>· Chrome</span></div>
+        <div>10:20–11:30 <span>—</span> PR review <span>· GitHub</span></div>
+        <div>11:30–11:45 <span>—</span> Slack spiral <span>· you'll see it</span></div>
+      </div>
+      <p style="margin-top:14px;">Private by design: screenshots and journal <b>never leave your Mac.</b> Ask it anything — "what did I do Tuesday?" — and get a real answer.</p>
+    </div>
+
+    <h3 style="margin:6px 0 0;font-size:20px;">Stop guessing. Start seeing.</h3>
+    <div class="plans">
+      <button class="plan" data-plan="week">
+        <span class="name">Weekly <small>try it properly</small></span>
+        <span class="price">$5<small>/week</small></span>
+      </button>
+      <button class="plan" data-plan="month">
+        <span class="name">Monthly <small>most flexible</small></span>
+        <span class="price">$20<small>/month</small></span>
+      </button>
+      <button class="plan best" data-plan="year">
+        <span class="badge">BEST VALUE · SAVE 20%</span>
+        <span class="name">Yearly <small>$192 billed once a year</small></span>
+        <span class="price">$16<small>/month</small></span>
+      </button>
+    </div>
+    <div class="err" id="err"></div>
+    <p class="fine">Secure checkout by Stripe · cancel anytime · your data never leaves your Mac</p>
+  </section>
+
+</div>
+
+<script>
+  const state = { belief: 0, memory: 0, switches: 32 };
+
+  function go(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    window.scrollTo(0, 0);
+    if (id === 's-an') runAnalysis();
+  }
+
+  function answer(key, value, next) { state[key] = value; go(next); }
+
+  // The "analyzing" beat: builds the Umax-style anticipation before the reveal.
+  function runAnalysis() {
+    const lines = [
+      'Comparing against 185M tracked working hours',
+      'Estimating your daily context switches…',
+      'Applying the 23-minute refocus cost…',
+      'Building your loss estimate…',
+    ];
+    const el = document.getElementById('an-line');
+    let i = 0;
+    const t = setInterval(() => {
+      i++;
+      if (i < lines.length) { el.textContent = lines[i]; return; }
+      clearInterval(t);
+      computeReveal();
+      go('s-reveal');
+    }, 900);
+  }
+
+  function computeReveal() {
+    // Deterministic, defensible-ish estimate: switches/day x 23.25min refocus, discounted
+    // (switch recovery overlaps real work), x5 days. Memory-blur adds untracked drift.
+    const lost = Math.round((state.switches * 23.25 / 60) * 0.28 * 5 + state.memory * 1.5);
+    document.getElementById('lost-h').textContent = Math.max(6, Math.min(19, lost));
+
+    const b = document.getElementById('belief-line');
+    if (state.belief === 0) {
+      b.innerHTML = 'You said you <b class="bad">don’t know</b> how much you focus. The measured average is just <b class="bad">2h 48m</b> a day — most people are shocked by their own number.';
+    } else {
+      b.innerHTML = `You believe you focus <b>~${state.belief}h a day</b>. The measured average is <b class="bad">2h 48m</b> — the gap is where your weeks go.`;
+    }
+  }
+
+  // Plans -> serverless checkout (Stripe). In test mode use card 4242 4242 4242 4242.
+  document.querySelectorAll('.plan').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.style.opacity = '.6';
+      try {
+        const r = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan: btn.dataset.plan }),
+        });
+        const data = await r.json();
+        if (!r.ok || !data.url) throw new Error(data.error || 'Checkout unavailable');
+        window.location = data.url;
+      } catch (e) {
+        btn.style.opacity = '1';
+        const err = document.getElementById('err');
+        err.textContent = e.message + ' — is the site deployed with STRIPE_SECRET_KEY set?';
+        err.style.display = 'block';
+      }
+    });
+  });
+</script>
+</body>
+</html>

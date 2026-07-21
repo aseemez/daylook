@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from contextline import observability
-from contextline.agents.analyst import BatchAnalysis, LabeledBlock
-from contextline.agents.memory import MemoryAgent
-from contextline.capture_script.mock_generator import generate
-from contextline.pipeline import Pipeline
+from daylook import observability
+from daylook.agents.analyst import BatchAnalysis, LabeledBlock
+from daylook.agents.memory import MemoryAgent
+from daylook.capture_script.mock_generator import generate
+from daylook.pipeline import Pipeline
 
 
 def _fake_analyze(batches, pending_dir=None, use_cache=True):
@@ -29,8 +29,8 @@ def _fake_analyze(batches, pending_dir=None, use_cache=True):
 
 
 def test_pipeline_emits_structured_log(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
-    from contextline import config
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    from daylook import config
     generate(pending=config.pending_dir(), start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
     observability.clear()
 
@@ -50,5 +50,5 @@ def test_pipeline_emits_structured_log(tmp_path, monkeypatch):
 
 
 def test_read_events_empty_when_no_log(tmp_path, monkeypatch):
-    monkeypatch.setenv("CONTEXTLINE_HOME", str(tmp_path))
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     assert observability.read_events() == []

@@ -1,0 +1,12 @@
+flowchart TD
+    User["User (Chat)"] <-->|"Journal & Answers"| Root["Root Agent<br/>Orchestrator"]
+
+    Screen["Screen Capture<br/>event-driven, dumb"] -->|"screenshot + JSON"| Pending["pending/<br/>captured events"]
+    Pending -->|"MCP read"| Capture["Capture Agent<br/>batch + move"]
+
+    Root -->|"Runs pipeline"| Capture
+    Capture -->|"Batched events"| Analyst["Analyst Agent<br/>vision · group · label"]
+    Analyst -->|"Labeled blocks"| Journalist["Journalist Agent<br/>daily writeup"]
+    Journalist -->|"Daily writeup"| Memory["Memory Agent<br/>persist · answer"]
+    Memory -->|"Persist & query"| DB[("SQLite<br/>Long-Term Memory")]
+    Root -->|"Query past days"| Memory

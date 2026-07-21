@@ -11,9 +11,9 @@ from datetime import datetime
 
 import pytest
 
-from contextline.agents.capture import FilesystemEventSource
-from contextline.agents.capture_mcp import MCPEventSource, mcp_available
-from contextline.capture_script.mock_generator import generate
+from daylook.agents.capture import FilesystemEventSource
+from daylook.agents.capture_mcp import MCPEventSource, mcp_available
+from daylook.capture_script.mock_generator import generate
 
 pytestmark = pytest.mark.skipif(not mcp_available(), reason="npx/mcp not available")
 

@@ -21,17 +21,17 @@ from pathlib import Path
 
 # Pin storage to a stable, repo-local home BEFORE importing anything that reads config, so the
 # response cache and journal db persist across runs (making reruns free) and never touch the
-# user's real ~/.contextline data. Force the plain filesystem read path for determinism.
+# user's real ~/.daylook data. Force the plain filesystem read path for determinism.
 EVAL_HOME = Path(__file__).parent / ".eval_home"
-os.environ["CONTEXTLINE_HOME"] = str(EVAL_HOME)
-os.environ.setdefault("CONTEXTLINE_USE_MCP", "0")
+os.environ["DAYLOOK_HOME"] = str(EVAL_HOME)
+os.environ.setdefault("DAYLOOK_USE_MCP", "0")
 
-from contextline import config, observability          # noqa: E402
-from contextline.agents.journalist import write_narrative  # noqa: E402
-from contextline.agents.memory import MemoryAgent      # noqa: E402
-from contextline.capture_script.mock_generator import generate  # noqa: E402
-from contextline.events import load_events             # noqa: E402
-from contextline.pipeline import Pipeline              # noqa: E402
+from daylook import config, observability          # noqa: E402
+from daylook.agents.journalist import write_narrative  # noqa: E402
+from daylook.agents.memory import MemoryAgent      # noqa: E402
+from daylook.capture_script.mock_generator import generate  # noqa: E402
+from daylook.events import load_events             # noqa: E402
+from daylook.pipeline import Pipeline              # noqa: E402
 
 FIXTURE_START = datetime(2026, 7, 5, 9, 0, 0)
 FIXTURE_DATE = "2026-07-05"
@@ -120,7 +120,7 @@ def run_eval(verbose: bool = True) -> dict:
 
 
 def _print_report(summary: dict) -> None:
-    print("\nContextline evaluation")
+    print("\nDaylook evaluation")
     print("=" * 60)
     for name, ok in summary["criteria"].items():
         mark = "PASS" if ok else "FAIL"

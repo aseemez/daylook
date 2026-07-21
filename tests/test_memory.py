@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from contextline.agents.memory import MemoryAgent
-from contextline.storage.sqlite import Store
+from daylook.agents.memory import MemoryAgent
+from daylook.storage.sqlite import Store
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_journal.json"
 

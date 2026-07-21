@@ -11,8 +11,8 @@ from datetime import datetime
 
 from PIL import Image
 
-from contextline.capture_script.mock_generator import SCENARIO, generate
-from contextline.events import CaptureEvent, load_events
+from daylook.capture_script.mock_generator import SCENARIO, generate
+from daylook.events import CaptureEvent, load_events
 
 
 def test_generate_writes_matching_pairs(tmp_path):
@@ -32,7 +32,7 @@ def test_generate_writes_matching_pairs(tmp_path):
 def test_sidecar_schema_is_exact(tmp_path):
     generate(pending=tmp_path, start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
     sample = json.loads(next(tmp_path.glob("*.json")).read_text())
-    assert set(sample.keys()) == {"event_id", "timestamp", "app_name", "window_title"}
+    assert set(sample.keys()) == {"event_id", "timestamp", "app_name", "window_title", "kind"}
     # round-trips through the shared schema
     CaptureEvent.from_dict(sample)
 

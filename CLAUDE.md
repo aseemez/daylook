@@ -1,4 +1,4 @@
-# Contextline
+# Daylook
 
 ## Product
 
@@ -9,7 +9,7 @@ Instead of "Cursor: 3h, Chrome: 1h", the output looks like:
 - 10:00–10:20 — Research on JWT rotation (Chrome, MDN + Stack Overflow)
 - 10:20–11:30 — PR review in GitHub
 
-Capture is **event-driven**: a new capture event fires when the active window/app changes, not on a fixed clock. This maps to real semantic boundaries (context switches) rather than arbitrary time slices, and keeps data volume and API cost low.
+Capture is **hybrid**: a `switch` event fires when the active window/app changes (the semantic boundary), and a `heartbeat` event fires every ~12s while the user stays stably in the same window (proof of presence). Switches carry the meaning; heartbeats carry the time — without them, a 2-hour deep-work session is one event and gets credited almost nothing. Cost stays low anyway because heartbeats are cheap riders: only *switches* count toward the vision-batch cap, and at most `MAX_IMAGES_PER_BATCH` keyframe screenshots go to the model per call (all switches + evenly-sampled heartbeats; the rest ride as text metadata).
 
 The user talks to the system through a chat interface — asking about the current day, past days, or refining how activity is bucketed. It runs locally, persists to a local store, and exposes a small HTTP API.
 
@@ -21,9 +21,10 @@ Two layers, kept strictly separate.
 
 A background script. No reasoning lives here.
 
-- Polls the frontmost app at short intervals (~1s) using `pyobjc` / `NSWorkspace` on macOS.
-- On active-window/app change, produces a capture event: a screenshot (`mss`, downscaled JPEG) plus a JSON sidecar with `timestamp`, `app_name`, `window_title`, and an event id.
-- Debounces rapid flicker (ignore switches under ~3s apart).
+- Polls the frontmost app at short intervals (~1s) using `pyobjc` / CGWindowList z-order on macOS.
+- On active-window/app change, produces a `switch` capture event: a screenshot (`mss`, downscaled JPEG) plus a JSON sidecar with `timestamp`, `app_name`, `window_title`, `kind`, and an event id.
+- While the committed window stays stable, emits a `heartbeat` event every `HEARTBEAT_SECONDS` (~12s) — same on-disk shape, `kind: "heartbeat"`. Heartbeats start only after the debounce confirms the user is stably on something.
+- Debounces rapid flicker (ignore switches under ~3s apart); no heartbeats while a switch candidate is pending.
 - That's it. This layer is an event source; agents do the rest.
 
 For the initial build, a **mock capture generator** replaces this — it emits realistic fake events into the same folder shape, so the agent pipeline can be built and tested without waiting on real capture.
@@ -62,7 +63,7 @@ pending/  → Capture Agent (read + batch + move to processed/)
 ## Storage layout
 
 ```
-~/.contextline/
+~/.daylook/
 ├── pending/          # capture events awaiting processing
 │   ├── evt_<id>.jpg
 │   └── evt_<id>.json
@@ -80,9 +81,9 @@ SQLite schema — minimum shape, adjust as needed:
 
 ## Data profiles (dev vs real — do not mix)
 
-`CONTEXTLINE_HOME` relocates the entire storage tree (see `contextline/config.py:_home`). Three profiles, strictly separated:
+`DAYLOOK_HOME` relocates the entire storage tree (see `daylook/config.py:_home`). Three profiles, strictly separated:
 
-- **Real** — `~/.contextline` (the default when `CONTEXTLINE_HOME` is unset). This is the owner's personal journal. **Agent sessions must never write here uninvited** — no mock seeding, no test pipelines, no `adk web` runs against it. Real screen capture stays consent-gated as before.
+- **Real** — `~/.daylook` (the default when `DAYLOOK_HOME` is unset). This is the owner's personal journal. **Agent sessions must never write here uninvited** — no mock seeding, no test pipelines, no `adk web` runs against it. Real screen capture stays consent-gated as before.
 - **Dev/test** — `<repo>/.dev_home`, gitignored. All development work goes here. Use the wrappers: `scripts/dev-seed.sh` (mock events), `scripts/dev-api.sh` (uvicorn), `scripts/dev-adk-web.sh` (ADK dev UI), or `source scripts/dev-env.sh` in a shell.
 - **Eval** — `<repo>/.eval_home`, owned by `eval.py` (it sets the env var itself). Don't touch.
 
@@ -137,7 +138,7 @@ Reruns must hit the on-disk cache (see below). If a rerun of the same fixture ma
 
 - Python 3.11+
 - Google ADK (agents + orchestration, session service)
-- Gemini via **Vertex AI** (not the AI Studio API) — see Auth & cost
+- Gemini via the **Gemini Developer API** (free-tier AI Studio key in dev; the relay's key in prod) — see Auth & cost
 - MCP filesystem server for the Capture Agent's read path (with plain-tool fallback)
 - SQLite (long-term memory)
 - FastAPI (local HTTP wrapper)
@@ -146,24 +147,20 @@ Reruns must hit the on-disk cache (see below). If a rerun of the same fixture ma
 
 ## Auth & cost
 
-Model calls go through **Vertex AI, authenticated with Application Default Credentials (ADC)**, billed against a Google Cloud project with free-trial credits. No API keys in code or env.
+Three routes to a Gemini model, all through the same `GOOGLE_API_KEY` seam the google-genai SDK reads. **Never mix them in one environment.**
 
-One-time setup on the dev machine:
+1. **Dev/test (this repo)** — a **free-tier Gemini Developer API key** (make one at https://aistudio.google.com/apikey). `.env` carries `GOOGLE_GENAI_USE_VERTEXAI=FALSE` + `GOOGLE_API_KEY`. No GCP project, no gcloud, no billing. Free-tier daily limits are fine for dev because the response cache makes reruns free.
+2. **End users (packaged app)** — an invite token sent to the **relay** (`relay/`), which holds the real provider credential server-side and forwards. Users never hold a Google key. See `DISTRIBUTION.md`.
+3. **Legacy: Vertex + ADC** — how dev used to run and how the currently-deployed relay authenticates upstream (bills the GCP trial project). Still supported (`GOOGLE_GENAI_USE_VERTEXAI=TRUE` + project vars) but not the default anywhere; the relay's production mode is a `GEMINI_API_KEY` env var on a real billing account with provider-side quota caps.
 
-```bash
-gcloud auth application-default login
-gcloud config set project YOUR_PROJECT_ID
-```
-
-Required env vars (put in `.env`, loaded on startup):
+Required dev env vars (put in `.env`, loaded on startup):
 
 ```
-GOOGLE_GENAI_USE_VERTEXAI=TRUE
-GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
-GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_VERTEXAI=FALSE
+GOOGLE_API_KEY=<free-tier AI Studio key>
 ```
 
-With these, ADK routes through Vertex automatically. Agent code stays clean:
+With these, ADK routes to the Gemini Developer API automatically. Agent code stays clean:
 
 ```python
 from google.adk.agents import LlmAgent
@@ -175,8 +172,9 @@ analyst = LlmAgent(model="gemini-2.5-flash", name="analyst", ...)
 - Default model everywhere is `gemini-2.5-flash`. Do not use `gemini-2.5-pro` unless a specific step demonstrably fails on flash.
 - Only the Analyst Agent receives images. Everything else is text-only.
 - Screenshots are downscaled to max 1024px on the long edge, JPEG q≈70, before being sent to the model.
-- Batch Analyst calls: one call per session/window, not one call per event.
-- **On-disk response cache** at `~/.contextline/cache/`, keyed on a hash of the input batch. Every Analyst call checks the cache first. This makes rerunning the pipeline or eval against the same fixture cost nothing after the first run — critical during iteration.
+- Batch Analyst calls: one call per session/window, not one call per event. Only switch events count toward the batch cap; heartbeats don't shatter batches.
+- Keyframe selection: at most `MAX_IMAGES_PER_BATCH` (12) screenshots per vision call — every switch plus evenly-sampled heartbeats. A heartbeat-dense focus hour is still one call with ≤12 images, so heartbeats add time-accounting precision at roughly zero marginal model cost (~$1–3/user/month on Flash for a full tracked day).
+- **On-disk response cache** at `~/.daylook/cache/`, keyed on a hash of the input batch. Every Analyst call checks the cache first. This makes rerunning the pipeline or eval against the same fixture cost nothing after the first run — critical during iteration.
 - Fallback if credits get tight: swap Analyst's model for `gemini-2.5-flash-lite`, don't change the architecture.
 
 ## FastAPI wrapper
@@ -191,7 +189,7 @@ The session_id maps directly to an ADK session; if null, a new session is create
 ## Repo layout
 
 ```
-contextline/
+daylook/
 ├── agents/
 │   ├── capture.py
 │   ├── analyst.py
@@ -222,23 +220,20 @@ contextline/
 - Don't fake persistence or caching. If either isn't wired, the eval should fail, and that's the point.
 - Where the CLAUDE.md doesn't specify an implementation detail, that's usually intentional — decide based on what fits and note the decision in a code comment. If a decision has repo-wide implications (schema change, storage relocation, an agent boundary shift), reflect it back in this file so future sessions stay consistent.
 
-## Current status (2026-07-05, evening)
+## Production plan (decided 2026-07-21 — don't re-litigate)
 
-**All 10 build steps are complete, and real screen capture is proven LIVE on the user's Mac**
-(repo: https://github.com/aseemez/contextline, `main` clean and pushed — latest `c365295`).
-Pipeline runs end to end on real Vertex AI (Gemini 2.5 Flash), scores **5/5 on `eval.py`**, serves
-over HTTP, and ingests **real screenshots of the user's actual screen**. Tests: **48 passed, 6
-skipped**. The capstone is **presentation-ready** (user is demoing to judges).
+Target: **~10 paying users, macOS only** (Windows is a later port of the capture layer only). The comparison product is [Dayflow](https://github.com/JerryZLiu/dayflow); Daylook's differentiators are event-driven capture (cheaper, semantic) and **zero-setup AI** (users get a token, not "go make a Google API key").
 
-Step 10 (`real_capture.py`) is done, its deps (`mss`/`pyobjc`) are **installed**, and it was
-live-tested. A capture bug was found and fixed: frontmost-app detection now reads the
-**CGWindowList z-order** (fresh each poll) instead of the *stale* `NSWorkspace.frontmostApplication()`
-— the old code reported the launching Terminal no matter which app the user switched to. Added
-`--minutes N` (optional auto-stop). Known limitation worth mentioning: split-screen attributes both
-apps' time to the focused one (capture is active-app-driven) — use separate full windows + Cmd-Tab.
+- **Business shape** — the standard wrapper-SaaS pattern: relay holds the provider credential, each customer gets a `cl_...` token, **paid from day 1 — no free tier**. Three Stripe Payment Links on the landing page: **$5/week**, **$20/month**, **$16/month billed yearly ($192/yr)**. Owner emails a token on payment (manual is correct at n=10; a Stripe webhook that mints tokens is the n=100 upgrade). Unit economics: heavy usage ≈ $1–3/user/month in Gemini Flash cost against $16–20 revenue.
+- **Product bar** — "Cursor-grade": the user pays, downloads, pastes a code, and it just works — no keys, no config, no terminal. Anything that breaks that (Gatekeeper scare, relay cold-start lag, silent capture failures) is a product bug, not a nice-to-have; the checklist lives in `DISTRIBUTION.md`.
+- **AI billing** — relay upstream moves off trial-credit Vertex/ADC to a **`GEMINI_API_KEY` on a real billing account** (the seam is built; it's one env var on redeploy). Cost control = provider-side quota caps on the key + budget alert; relay's in-memory counters are an abuse throttle, not billing truth.
+- **Dev/test** — free-tier AI Studio key (see Auth & cost). Never bill dev work to the production key.
+- **Trust upgrades when revenue exists** — Apple Developer ID ($99/yr, removes the Gatekeeper "Open Anyway" scare) → auto-update → Firestore-backed metering.
 
-👉 **Read `PROGRESS.md` for the full handoff**: per-step state, environment facts (Python 3.14,
-ADK 2.3.0, `GOOGLE_CLOUD_LOCATION=global`, ADC/no-keys, on-disk cache makes reruns free), the
-demo recipe, decisions already made (don't re-open), and run commands. Real-screen capture stays
-**consent-gated** — the user opted in for the demo, but don't capture their screen in a new session
-without an explicit ask. Also flagged there: a plaintext `STRIPE_SECRET_KEY` in the user's `~/.zshrc`.
+## Current status (2026-07-21)
+
+**Product complete and distribution built; production hardening in progress** (repo: https://github.com/aseemez/daylook). All 10 build steps done, real capture live-tested (CGWindowList z-order fix; split-screen limitation known). **Tests 78 passed / 6 skipped.** Eval logic unchanged but the Analyst prompt is now v2 (heartbeats), so **the first `eval.py` rerun needs a real `GOOGLE_API_KEY` in `.env`** to repopulate the cache — after that it's free again. Release track done: web chat UI, PyInstaller `.app`/`.dmg` (arm64, unsigned), landing page in `docs/`, and the **relay live on Cloud Run** (`https://contextline-relay-862472415362.us-central1.run.app`, verified answering 2026-07-21; deployed revision predates `/healthz` + the API-key upstream — needs a redeploy). 50 invite tokens in gitignored `relay/tokens.txt`.
+
+Done this session: dev switched to free-tier Gemini API key (`.env` — **owner must paste a real key**), relay gained the `GEMINI_API_KEY` upstream mode, docs rewritten around the production plan, and **hybrid capture shipped** (stable-work heartbeats + switch-only batching caps + Analyst keyframe selection; `kind` field on events, fully backward-compatible with old sidecars/fixtures). Not done: relay redeploy, GitHub release + Pages enablement, Stripe link, app signing, `scripts/archive-real-home.sh` (all outward-facing — wait for the owner's go).
+
+👉 **`PROGRESS.md`** is the detailed handoff; **`DISTRIBUTION.md`** is the ship-and-charge runbook; **`VERIFY.md`** is the owner's self-check list. Real-screen capture stays **consent-gated** — never capture in a new session without an explicit ask. Standing flag: a plaintext `STRIPE_SECRET_KEY` sits in the user's `~/.zshrc`.

@@ -135,19 +135,19 @@
     "event_id": "evt_0023",
     "timestamp": "2026-07-05T10:27:20",
     "app_name": "Cursor",
-    "window_title": "analyst.py \u2014 contextline"
+    "window_title": "analyst.py \u2014 daylook"
   },
   {
     "event_id": "evt_0024",
     "timestamp": "2026-07-05T10:35:20",
     "app_name": "Cursor",
-    "window_title": "mock_generator.py \u2014 contextline"
+    "window_title": "mock_generator.py \u2014 daylook"
   },
   {
     "event_id": "evt_0025",
     "timestamp": "2026-07-05T10:42:20",
     "app_name": "Terminal",
-    "window_title": "python -m contextline.capture_script.mock_generator"
+    "window_title": "python -m daylook.capture_script.mock_generator"
   },
   {
     "event_id": "evt_0026",
@@ -171,7 +171,7 @@
     "event_id": "evt_0029",
     "timestamp": "2026-07-05T10:50:45",
     "app_name": "Cursor",
-    "window_title": "journalist.py \u2014 contextline"
+    "window_title": "journalist.py \u2014 daylook"
   },
   {
     "event_id": "evt_0030",

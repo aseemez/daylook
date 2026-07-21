@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to Daylook</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --surface: #ffffff; --ink: #23221f; --ink-2: #56534c; --muted: #928e85;
+    --line: #e7e4dd; --accent: #3f6b4d; --accent-2: #57906a; --accent-soft: #e9f0ea;
+    --danger: #b3564f;
+    --shadow: 0 1px 2px rgba(30,28,24,.05), 0 12px 32px rgba(30,28,24,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --surface: #201e1c; --ink: #ece9e2; --ink-2: #bcb8af; --muted: #8b877e;
+      --line: #322f2b; --accent: #6f9a78; --accent-2: #8ab894; --accent-soft: #232c25;
+      --danger: #d98a83;
+      --shadow: 0 1px 2px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 620px; margin: 0 auto; padding: 60px 22px; }
+  .brand { font-weight: 700; font-size: 15px; color: var(--ink-2); margin-bottom: 28px; }
+  .brand span { color: var(--accent); }
+  h1 { letter-spacing: -.5px; font-size: clamp(28px, 6vw, 38px); margin: 0 0 8px; }
+  .sub { color: var(--ink-2); margin: 0 0 28px; }
+  .code-card { background: var(--surface); border: 1.5px solid var(--accent); border-radius: 16px;
+               padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 28px; }
+  .code-card label { font-size: 12.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .code-row { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  #token { flex: 1; font: 600 20px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .5px;
+           background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; word-break: break-all; }
+  .copy { border: 0; cursor: pointer; background: var(--accent); color: #fff; font: 600 14px inherit;
+          font-family: inherit; padding: 12px 18px; border-radius: 10px; }
+  .copy:hover { background: var(--accent-2); }
+  ol.steps { padding-left: 0; margin: 0; list-style: none; counter-reset: n; }
+  ol.steps li { counter-increment: n; display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  ol.steps li::before { content: counter(n); flex: 0 0 28px; height: 28px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; font-size: 14px; }
+  ol.steps b { display: block; }
+  ol.steps small { color: var(--muted); }
+  .btn { display: inline-block; text-decoration: none; background: var(--accent); color: #fff; font-weight: 600;
+         padding: 15px 26px; border-radius: 12px; box-shadow: var(--shadow); margin-top: 26px; }
+  .btn:hover { background: var(--accent-2); }
+  .err { color: var(--danger); }
+  .fine { color: var(--muted); font-size: 12.5px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">context<span>line</span></div>
+  <h1 id="headline">You're in. 🎉</h1>
+  <p class="sub" id="subline">Here's your personal invite code — the only thing the app will ever ask you for.</p>
+
+  <div class="code-card" id="code-card" style="display:none">
+    <label>Your invite code</label>
+    <div class="code-row">
+      <div id="token">…</div>
+      <button class="copy" id="copy">Copy</button>
+    </div>
+  </div>
+
+  <ol class="steps">
+    <li><div><b>Download Daylook for Mac</b><small>Apple Silicon · drag it into Applications</small></div></li>
+    <li><div><b>Open it</b><small>if macOS objects: System Settings → Privacy &amp; Security → "Open Anyway" (one time)</small></div></li>
+    <li><div><b>Paste your invite code</b><small>into the setup box that appears in your browser</small></div></li>
+    <li><div><b>Say "start tracking"</b><small>grant Screen Recording when macOS asks — from then on, your day writes itself</small></div></li>
+  </ol>
+
+  <a class="btn" href="https://github.com/aseemez/daylook/releases/latest/download/Daylook.dmg">Download for Mac ↓</a>
+  <p class="fine">Everything Daylook records stays on your Mac. Tonight, ask it: <i>"what did I do today?"</i></p>
+</div>
+
+<script>
+  (async () => {
+    const id = new URLSearchParams(location.search).get('session_id');
+    const tokenEl = document.getElementById('token');
+    const card = document.getElementById('code-card');
+    if (!id) {
+      document.getElementById('headline').textContent = 'Hmm — no checkout found.';
+      document.getElementById('subline').innerHTML =
+        '<span class="err">This page only works right after a purchase. <a href="/">Back to start</a>.</span>';
+      return;
+    }
+    card.style.display = 'block';
+    try {
+      const r = await fetch('/api/success?session_id=' + encodeURIComponent(id));
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'verification failed');
+      tokenEl.textContent = data.token;
+    } catch (e) {
+      tokenEl.textContent = '—';
+      document.getElementById('subline').innerHTML =
+        '<span class="err">Could not verify the payment (' + e.message +
+        '). If you were charged, reply to your receipt email and you\'ll get a code personally.</span>';
+    }
+    document.getElementById('copy').onclick = async () => {
+      await navigator.clipboard.writeText(tokenEl.textContent);
+      document.getElementById('copy').textContent = 'Copied ✓';
+    };
+  })();
+</script>
+</body>
+</html>

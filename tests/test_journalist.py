@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from contextline.agents import journalist
+from daylook.agents import journalist
 
 FIXTURE = Path(__file__).parent / "fixtures" / "labeled_blocks.json"
 
