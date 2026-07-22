@@ -49,6 +49,30 @@ class MemoryAgent:
     def available_dates(self) -> list[str]:
         return self.store.list_dates()
 
+    def content_dates(self) -> list[str]:
+        """Dates with a writeup or any blocks — the journal list (includes manual-only days)."""
+        return self.store.dates_with_content()
+
+    # --- manual calendar edits (user-authored blocks) ---
+    # The calendar shows what was captured; these let the user correct/augment it by hand
+    # (e.g. add an offline meeting). All go through the store so Memory stays the only DB path.
+
+    def add_block(
+        self, date: str, start: str, end: str, label: str,
+        app_name: str, category: str | None, duration_seconds: int,
+    ) -> dict:
+        block_id = self.store.add_block(
+            date, start, end, label, app_name, category, duration_seconds, manual=True
+        )
+        return self.store.get_block(block_id)
+
+    def update_block(self, block_id: int, **fields) -> dict | None:
+        self.store.update_block(block_id, **fields)
+        return self.store.get_block(block_id)
+
+    def delete_block(self, block_id: int) -> bool:
+        return self.store.delete_block(block_id)
+
     # --- natural-language answering (LLM + DB tools) ---
 
     def _make_query_agent(self, today: str):
@@ -78,6 +102,18 @@ class MemoryAgent:
             """Return all blocks across all days for a given app name."""
             return store.find_blocks_by_app(app_name)
 
+        def productivity_summary(date: str) -> dict:
+            """Seconds spent PRODUCTIVE vs DISTRACTING vs NEUTRAL on a date (YYYY-MM-DD).
+
+            Rolls each block's category into a productivity lane so you can answer
+            'was I productive?' or 'how much did I waste' honestly, grounded in real data."""
+            agg = {"productive": 0, "distracting": 0, "neutral": 0, "by_lane": {}}
+            for cat, secs in store.time_by_category(date).items():
+                lane = config.lane_of(cat)
+                agg["by_lane"][lane] = agg["by_lane"].get(lane, 0) + secs
+                agg[config.productivity_of(cat)] += secs
+            return agg
+
         from google.adk.agents import LlmAgent
 
         instruction = (
@@ -86,7 +122,12 @@ class MemoryAgent:
             "Never invent activity, times, or apps — if the tools return nothing for the asked "
             f"date, say there's no record. Today is {today}; resolve relative dates like "
             "'yesterday' against it. Dates are YYYY-MM-DD. Be concise and specific, citing real "
-            "times and durations from the data."
+            "times and durations from the data.\n"
+            "When the user asks whether they were productive, focused, or wasted time, call "
+            "productivity_summary: 'productive' covers focused work, research and comms; "
+            "'distracting' covers social/feeds/entertainment; 'neutral' is breaks/idle. Judge "
+            "honestly from those numbers rather than guessing, and it's fine to gently point out "
+            "a distracting stretch (e.g. time on social apps) if the data shows it."
         )
         return LlmAgent(
             name="memory",
@@ -95,6 +136,7 @@ class MemoryAgent:
             tools=[
                 get_journal, get_blocks, list_days,
                 time_by_category, time_by_app, find_blocks_by_app,
+                productivity_summary,
             ],
         )
 

@@ -34,9 +34,12 @@ from daylook.events import CaptureEvent, EventBatch
 from daylook.imaging import prepare_image
 
 # Bump when the prompt/schema changes so stale cache entries are naturally bypassed.
-PROMPT_VERSION = "analyst-v3"  # v3: short labels + fewer/larger blocks (v2: heartbeats+keyframes)
+PROMPT_VERSION = "analyst-v5"  # v5: content-aware productivity (social/entertainment) (v4 titles)
 
-CATEGORIES = ["coding", "research", "communication", "review", "meeting", "writing", "break", "other"]
+CATEGORIES = [
+    "coding", "research", "communication", "review", "meeting", "writing",
+    "planning", "break", "distraction", "social", "entertainment", "other",
+]
 
 
 # --- LLM output schema (grouping only — no times, no apps) ----------------------------
@@ -243,16 +246,29 @@ _INSTRUCTION = (
     "Rules:\n"
     "- Only group consecutive events. Never reorder.\n"
     "- Every event must belong to exactly one block. Reference events by their exact event_id.\n"
-    "- Keep each label SHORT — a few plain words naming the activity, e.g. 'Debugging auth "
-    "flow', 'JWT rotation research', 'YouTube tutorial', 'Email triage'. Never write a full "
-    "sentence, and never mention this journal, the tracking, or the app you're labelling for.\n"
+    "- Write each label as a short, specific DESCRIPTION of what the person was doing, like a "
+    "calendar-event title — roughly 4 to 10 words. Name the actual task, using what the "
+    "screenshots show, not just the app. Good: 'Debugging the login redirect loop', "
+    "'Researching JWT rotation on MDN and Stack Overflow', 'Watching a studio-apartment design "
+    "video', 'Replying to the team standup thread'. Bad: just an app name ('Chrome'), one bare "
+    "word ('Coding'), or a whole paragraph. Never mention this journal, the tracking, or the "
+    "app you're labelling for.\n"
     "- Use the screenshots to make the label specific about what was actually happening, not "
     "just the app name.\n"
     "- Events marked kind=heartbeat mean the person stayed in the SAME window (captured "
     "periodically during stable work). Runs of heartbeats almost always continue the current "
     "activity; only screenshots are proof of a content change within them. Most heartbeats "
     "have no screenshot attached — that's normal, group them by their app/window metadata.\n"
-    f"- category must be one of: {', '.join(CATEGORIES)}.\n"
+    "- Judge productivity by CONTENT, not by the app. The SAME app can be productive or not: "
+    "reading docs / a tutorial / researching a problem on YouTube or the web is 'research'; "
+    "aimless feed-scrolling, entertainment videos, or blind-dating clips on the same YouTube is "
+    "'social' or 'entertainment'. Use the screenshots to tell which it was. Twitter/X, "
+    "Instagram, TikTok, Reddit browsing default to 'social' unless the screen shows genuine "
+    "work/research.\n"
+    f"- category must be one of: {', '.join(CATEGORIES)}. Guide: coding/writing/review/"
+    "planning/meeting = focused work; research = learning with intent; communication = "
+    "chat/email; social = feeds & messaging-for-fun; entertainment = video/music for leisure; "
+    "distraction = clearly off-task; break = away/idle.\n"
 )
 
 

@@ -32,10 +32,19 @@ CREATE TABLE IF NOT EXISTS blocks (
     app_name         TEXT NOT NULL,
     category         TEXT,
     duration_seconds INTEGER,
-    source_event_ids TEXT NOT NULL
+    source_event_ids TEXT NOT NULL,
+    -- 1 = the user added/edited this block by hand in the calendar; 0 = derived by the pipeline.
+    -- Manual blocks survive re-processing of the same day (save_day only clears derived ones).
+    manual           INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_blocks_date ON blocks(date);
 """
+
+# Columns added after the first release; applied on connect so existing dev/real DBs upgrade
+# in place (SQLite has no "ADD COLUMN IF NOT EXISTS", so we probe pragma table_info first).
+_MIGRATIONS = [
+    ("blocks", "manual", "ALTER TABLE blocks ADD COLUMN manual INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 class Store:
@@ -49,7 +58,15 @@ class Store:
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an older DB up to the current schema without dropping data."""
+        for table, column, ddl in _MIGRATIONS:
+            cols = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                self.conn.execute(ddl)
 
     def close(self) -> None:
         self.conn.close()
@@ -66,10 +83,12 @@ class Store:
                 "created_at=excluded.created_at",
                 (date, writeup, now),
             )
-            self.conn.execute("DELETE FROM blocks WHERE date = ?", (date,))
+            # Only clear the pipeline-derived blocks; anything the user added by hand in the
+            # calendar (manual=1) is kept, so re-processing a day never wipes their edits.
+            self.conn.execute("DELETE FROM blocks WHERE date = ? AND manual = 0", (date,))
             self.conn.executemany(
                 "INSERT INTO blocks(date, start, end, label, app_name, category, "
-                "duration_seconds, source_event_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
                 [
                     (
                         date,
@@ -95,14 +114,29 @@ class Store:
 
     def get_blocks(self, date: str) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT date, start, end, label, app_name, category, duration_seconds, "
-            "source_event_ids FROM blocks WHERE date = ? ORDER BY start", (date,)
+            "SELECT id, date, start, end, label, app_name, category, duration_seconds, "
+            "source_event_ids, manual FROM blocks WHERE date = ? ORDER BY start", (date,)
         ).fetchall()
         return [self._block_row(r) for r in rows]
+
+    def get_block(self, block_id: int) -> dict | None:
+        row = self.conn.execute(
+            "SELECT id, date, start, end, label, app_name, category, duration_seconds, "
+            "source_event_ids, manual FROM blocks WHERE id = ?", (block_id,)
+        ).fetchone()
+        return self._block_row(row) if row else None
 
     def list_dates(self) -> list[str]:
         rows = self.conn.execute("SELECT date FROM days ORDER BY date").fetchall()
         return [r["date"] for r in rows]
+
+    def dates_with_content(self) -> list[str]:
+        """Every date that has *either* a saved writeup or any block (incl. manual-only days),
+        so a day the user built purely by hand still shows up in the journal list."""
+        rows = self.conn.execute(
+            "SELECT date FROM days UNION SELECT DISTINCT date FROM blocks"
+        ).fetchall()
+        return sorted({r["date"] for r in rows})
 
     def time_by_category(self, date: str) -> dict[str, int]:
         rows = self.conn.execute(
@@ -120,14 +154,61 @@ class Store:
 
     def find_blocks_by_app(self, app_name: str) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT date, start, end, label, app_name, category, duration_seconds, "
-            "source_event_ids FROM blocks WHERE app_name = ? ORDER BY date, start",
+            "SELECT id, date, start, end, label, app_name, category, duration_seconds, "
+            "source_event_ids, manual FROM blocks WHERE app_name = ? ORDER BY date, start",
             (app_name,),
         ).fetchall()
         return [self._block_row(r) for r in rows]
+
+    # --- manual block editing (user-authored calendar entries) ---
+
+    def add_block(
+        self,
+        date: str,
+        start: str,
+        end: str,
+        label: str,
+        app_name: str,
+        category: str | None,
+        duration_seconds: int,
+        manual: bool = True,
+    ) -> int:
+        """Insert a single block and return its new id. Used for user-added calendar entries;
+        such blocks carry ``source_event_ids=[]`` (they trace to the user, not to capture)."""
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT INTO blocks(date, start, end, label, app_name, category, "
+                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (date, start, end, label, app_name, category, duration_seconds,
+                 json.dumps([]), 1 if manual else 0),
+            )
+            return int(cur.lastrowid)
+
+    _EDITABLE = {"start", "end", "label", "app_name", "category", "duration_seconds"}
+
+    def update_block(self, block_id: int, **fields) -> bool:
+        """Update selected columns of one block. Returns False if the id doesn't exist."""
+        cols = {k: v for k, v in fields.items() if k in self._EDITABLE and v is not None}
+        if not cols:
+            return self.get_block(block_id) is not None
+        assignments = ", ".join(f"{k} = ?" for k in cols)
+        with self.conn:
+            cur = self.conn.execute(
+                f"UPDATE blocks SET {assignments} WHERE id = ?",
+                (*cols.values(), block_id),
+            )
+            return cur.rowcount > 0
+
+    def delete_block(self, block_id: int) -> bool:
+        """Remove one block by id. Returns False if it didn't exist."""
+        with self.conn:
+            cur = self.conn.execute("DELETE FROM blocks WHERE id = ?", (block_id,))
+            return cur.rowcount > 0
 
     @staticmethod
     def _block_row(r: sqlite3.Row) -> dict:
         d = dict(r)
         d["source_event_ids"] = json.loads(d["source_event_ids"])
+        if "manual" in d:
+            d["manual"] = bool(d["manual"])
         return d

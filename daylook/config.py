@@ -105,6 +105,35 @@ MAX_EVENT_DWELL_SECONDS = 15 * 60
 MIN_BLOCK_SECONDS = 120
 
 
+# --- Productivity lanes ---------------------------------------------------------------
+# Each granular activity category rolls up into one of a few high-level "lanes". Lanes are
+# what the calendar colours by and what focus-scoring counts, so the day reads as a handful of
+# bright bands ("productive", "social", …) rather than a wall of app names. The UI mirrors this
+# map (daylook/api/static/index.html) — keep them in sync if you edit either.
+LANES: dict[str, str] = {
+    "coding": "focus", "writing": "focus", "review": "focus", "planning": "focus", "meeting": "focus",
+    "research": "research",
+    "communication": "comms",
+    "distraction": "social", "social": "social", "entertainment": "social",
+    "break": "idle", "other": "idle",
+}
+# focus/research/comms count as productive; social is a distraction; idle is neutral.
+LANE_PRODUCTIVITY: dict[str, str] = {
+    "focus": "productive", "research": "productive", "comms": "productive",
+    "social": "distracting", "idle": "neutral",
+}
+
+
+def lane_of(category: str | None) -> str:
+    """The productivity lane a granular category belongs to (default 'idle')."""
+    return LANES.get((category or "other").lower(), "idle")
+
+
+def productivity_of(category: str | None) -> str:
+    """'productive' | 'distracting' | 'neutral' for a category."""
+    return LANE_PRODUCTIVITY.get(lane_of(category), "neutral")
+
+
 def vertex_configured() -> bool:
     """True when the Vertex routing env vars are present (legacy/relay-server path)."""
     return (

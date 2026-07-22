@@ -75,9 +75,11 @@ pending/  → Capture Agent (read + batch + move to processed/)
 SQLite schema — minimum shape, adjust as needed:
 
 - `days(date PRIMARY KEY, writeup TEXT, created_at TIMESTAMP)`
-- `blocks(id INTEGER PRIMARY KEY, date TEXT, start TIMESTAMP, end TIMESTAMP, label TEXT, app_name TEXT, source_event_ids JSON)`
+- `blocks(id INTEGER PRIMARY KEY, date TEXT, start TIMESTAMP, end TIMESTAMP, label TEXT, app_name TEXT, category TEXT, duration_seconds INT, source_event_ids JSON, manual INT DEFAULT 0)`
 
 `source_event_ids` stores the list of capture event ids that were merged into that block. The anti-hallucination check in `eval.py` uses this to verify every block traces back to real captured data.
+
+`manual=1` marks a block the user added or edited by hand in the calendar UI (its `source_event_ids` is `[]` — it traces to the user, not to capture). Manual blocks **survive re-processing** of the same day: `save_day` only clears `manual=0` rows. Editing goes through `MemoryAgent.add_block/update_block/delete_block` (the store's only write path stays Memory) and is exposed by `POST/PATCH/DELETE /journal/{date}/blocks[/{id}]` in the API. Column added via an in-place migration in `Store._migrate` so existing DBs upgrade without data loss. The anti-hallucination invariant still holds for *pipeline* output; manual blocks are a deliberate user-authored exception and are never part of eval fixtures.
 
 ## Data profiles (dev vs real — do not mix)
 

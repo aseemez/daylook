@@ -13,9 +13,10 @@ Run locally:
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -45,11 +46,12 @@ _memory: MemoryAgent | None = None
 
 
 def get_memory() -> MemoryAgent:
-    """Lazy read-only Memory handle for the journal endpoints.
+    """Lazy Memory handle for the journal endpoints (reads + manual calendar edits).
 
-    Deliberately separate from the Root Agent: the sidebar just needs to *read* stored days
-    (no model, no session), so it should not spin up the whole orchestration graph. Same clean
-    Memory interface, so this stays true if Memory is ever split into its own service.
+    Deliberately separate from the Root Agent: the journal pane just needs to read stored days
+    and apply hand edits (no model, no chat session), so it should not spin up the whole
+    orchestration graph. Same clean Memory interface, so this stays true if Memory is ever split
+    into its own service.
     """
     global _memory
     if _memory is None:
@@ -114,8 +116,8 @@ def post_setup(req: SetupRequest) -> dict:
 
 @app.get("/journal/dates")
 def journal_dates(memory: MemoryAgent = Depends(get_memory)) -> dict:
-    """Every date that has a saved journal, newest first — the sidebar's day list."""
-    return {"dates": sorted(memory.available_dates(), reverse=True)}
+    """Every date with a journal or hand-added blocks, newest first — the sidebar's day list."""
+    return {"dates": sorted(memory.content_dates(), reverse=True)}
 
 
 @app.get("/journal/{date}")
@@ -135,6 +137,86 @@ def journal_day(date: str, memory: MemoryAgent = Depends(get_memory)) -> dict:
         "time_by_category": store.time_by_category(date),
         "time_by_app": store.time_by_app(date),
     }
+
+
+class BlockIn(BaseModel):
+    """A user-authored calendar entry. Times are wall-clock ``HH:MM`` on the day being edited;
+    the server anchors them to that date and computes the duration."""
+    start: str            # "HH:MM"
+    end: str              # "HH:MM"
+    label: str
+    category: str | None = None
+    app_name: str | None = None
+
+
+class BlockPatch(BaseModel):
+    start: str | None = None
+    end: str | None = None
+    label: str | None = None
+    category: str | None = None
+    app_name: str | None = None
+
+
+def _resolve_times(date: str, start: str, end: str) -> tuple[str, str, int]:
+    """Turn a date + two ``HH:MM`` strings into ISO timestamps and a positive duration.
+
+    Raises 400 on malformed times or a non-positive span so the UI can show a clear error
+    instead of writing a nonsensical block.
+    """
+    try:
+        s = datetime.strptime(f"{date} {start}", "%Y-%m-%d %H:%M")
+        e = datetime.strptime(f"{date} {end}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Times must be HH:MM (24-hour).")
+    dur = int((e - s).total_seconds())
+    if dur <= 0:
+        raise HTTPException(status_code=400, detail="End time must be after start time.")
+    return s.isoformat(timespec="seconds"), e.isoformat(timespec="seconds"), dur
+
+
+@app.post("/journal/{date}/blocks")
+def add_block(date: str, req: BlockIn, memory: MemoryAgent = Depends(get_memory)) -> dict:
+    """Add a manual activity to a day's calendar (e.g. an offline meeting)."""
+    start, end, dur = _resolve_times(date, req.start, req.end)
+    block = memory.add_block(
+        date=date, start=start, end=end, label=req.label.strip() or "Activity",
+        app_name=(req.app_name or "").strip(), category=(req.category or "other"),
+        duration_seconds=dur,
+    )
+    return {"block": block}
+
+
+@app.patch("/journal/{date}/blocks/{block_id}")
+def edit_block(
+    date: str, block_id: int, req: BlockPatch, memory: MemoryAgent = Depends(get_memory)
+) -> dict:
+    """Edit one block (label/category/times). Works on both manual and captured blocks."""
+    existing = memory.store.get_block(block_id)
+    if not existing or existing["date"] != date:
+        raise HTTPException(status_code=404, detail="No such block on this day.")
+    fields: dict = {}
+    if req.label is not None:
+        fields["label"] = req.label.strip() or existing["label"]
+    if req.category is not None:
+        fields["category"] = req.category
+    if req.app_name is not None:
+        fields["app_name"] = req.app_name.strip()
+    if req.start is not None or req.end is not None:
+        # Re-derive both timestamps + duration together so start/end/duration stay consistent.
+        start = req.start if req.start is not None else existing["start"][11:16]
+        end = req.end if req.end is not None else existing["end"][11:16]
+        fields["start"], fields["end"], fields["duration_seconds"] = _resolve_times(date, start, end)
+    block = memory.update_block(block_id, **fields)
+    return {"block": block}
+
+
+@app.delete("/journal/{date}/blocks/{block_id}")
+def remove_block(date: str, block_id: int, memory: MemoryAgent = Depends(get_memory)) -> dict:
+    existing = memory.store.get_block(block_id)
+    if not existing or existing["date"] != date:
+        raise HTTPException(status_code=404, detail="No such block on this day.")
+    memory.delete_block(block_id)
+    return {"deleted": block_id}
 
 
 @app.get("/health")
