@@ -121,3 +121,17 @@ def test_api_edit_wrong_day_is_404(client):
                  json={"start": "09:00", "end": "09:30", "label": "x"}).json()["block"]["id"]
     r = c.patch(f"/journal/2026-07-06/blocks/{bid}", json={"label": "nope"})
     assert r.status_code == 404
+
+
+def test_api_reclassify_band(client):
+    """Correcting a band's type sets category on all its blocks at once."""
+    c, _ = client
+    date = "2026-07-05"
+    ids = [
+        c.post(f"/journal/{date}/blocks", json={"start": "09:00", "end": "09:20", "label": "a", "category": "social"}).json()["block"]["id"],
+        c.post(f"/journal/{date}/blocks", json={"start": "09:20", "end": "09:40", "label": "b", "category": "social"}).json()["block"]["id"],
+    ]
+    r = c.post(f"/journal/{date}/reclassify", json={"ids": ids, "category": "coding"})
+    assert r.status_code == 200 and r.json()["updated"] == 2
+    cats = {b["category"] for b in c.get(f"/journal/{date}").json()["blocks"]}
+    assert cats == {"coding"}   # both blocks moved off "social"

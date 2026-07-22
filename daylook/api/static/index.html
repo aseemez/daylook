@@ -297,6 +297,7 @@
   .fb-legend b { color: var(--ink); font-weight: 650; }
   .fb-legend .k { display: inline-flex; align-items: center; gap: 6px; }
   .fb-legend .k .d { width: 9px; height: 9px; border-radius: 50%; }
+  .fb-note { margin-top: 7px; font-size: 11px; color: var(--muted); }
 
   .cal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px;
     flex-wrap: wrap; margin: 16px 0 12px; }
@@ -319,7 +320,7 @@
     background: linear-gradient(90deg, color-mix(in srgb, var(--lane) 13%, var(--surface)), var(--surface) 70%);
     border-radius: 11px; overflow: hidden; transition: box-shadow .13s ease; }
   .band-body:hover { box-shadow: var(--shadow); }
-  .band-head { display: grid; grid-template-columns: auto 1fr auto auto; gap: 9px; align-items: center;
+  .band-head { display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 9px; align-items: center;
     padding: 9px 11px; cursor: pointer; }
   .band-head .ld { width: 9px; height: 9px; border-radius: 50%; background: var(--lane); flex: 0 0 auto; box-shadow: 0 0 0 3px color-mix(in srgb, var(--lane) 22%, transparent); }
   .band-story { min-width: 0; }
@@ -332,6 +333,24 @@
   .band-time b { display: block; color: var(--ink); font-weight: 650; font-size: 12px; }
   .chev { width: 16px; height: 16px; color: var(--muted); transition: transform .16s var(--spring); flex: 0 0 auto; }
   .band.open .chev { transform: rotate(90deg); }
+  .band-tag { width: 26px; height: 26px; border-radius: 7px; border: 1px solid transparent; background: transparent;
+    color: var(--muted); cursor: pointer; display: grid; place-items: center; flex: 0 0 auto; opacity: 0;
+    transition: opacity .12s ease, color .12s ease, border-color .12s ease; }
+  .band-body:hover .band-tag, .band.picking .band-tag { opacity: 1; }
+  .band-tag:hover { color: var(--lane); border-color: color-mix(in srgb, var(--lane) 45%, var(--line)); }
+  .band.picking .band-tag { color: var(--lane); }
+  .band-tag svg { width: 14px; height: 14px; }
+  @media (hover: none) { .band-tag { opacity: 1; } }
+
+  /* Type picker (correct the AI's guess) */
+  .reclass { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 2px 11px 10px 30px; }
+  .reclass-q { font-size: 11px; color: var(--muted); font-weight: 600; margin-right: 2px; }
+  .lane-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font: inherit; font-size: 12px; cursor: pointer;
+    transition: border-color .12s ease, color .12s ease; }
+  .lane-chip .d { width: 8px; height: 8px; border-radius: 50%; background: var(--lane); }
+  .lane-chip:hover { border-color: var(--lane); color: var(--ink); }
+  .lane-chip.on { border-color: var(--lane); color: var(--ink); background: color-mix(in srgb, var(--lane) 12%, var(--surface)); font-weight: 600; }
 
   .kids { display: none; padding: 2px 10px 9px 30px; }
   .band.open .kids { display: block; }
@@ -842,10 +861,16 @@
   let editingId = null;     // block id being edited, "new" for the add form, or null
   let expanded = new Set(); // band start-times currently expanded (drill-down open)
   let newRange = null;      // {start,end} to prefill the add form (from an untracked gap)
+  let reclassifyBand = null;// band start-time whose type-picker is open, or null
+  let currentBands = [];    // last-rendered bands, so the type-picker can find a band's blocks
+
+  // Correcting a band's type sets every block in it to this representative category (the lane,
+  // colour and focus-scoring follow from category). Labels are untouched — only the type changes.
+  const LANE_CANON = { focus: "coding", research: "research", comms: "communication", social: "social", idle: "break" };
 
   async function openDay(date) {
     showJournal();
-    currentDate = date; editingId = null; expanded = new Set(); newRange = null;
+    currentDate = date; editingId = null; expanded = new Set(); newRange = null; reclassifyBand = null;
     document.querySelectorAll(".day-item").forEach((el) => el.classList.toggle("active", el.dataset.date === date));
     journalPage.innerHTML = `<div class="cal-empty">Opening…</div>`;
     await reloadDay();
@@ -937,13 +962,21 @@
     </div>`;
   }
 
+  function laneChipsHtml(band) {
+    return `<div class="reclass" role="group" aria-label="Change type">
+        <span class="reclass-q">Type:</span>
+        ${LANE_ORDER.map((l) => `<button class="lane-chip${l === band.lane ? " on" : ""}" data-act="setlane" data-band="${band.start}" data-lane="${l}" style="--lane:${laneColor(l)}"><span class="d"></span>${LANE[l].name}</button>`).join("")}
+      </div>`;
+  }
+
   function bandHtml(band) {
     const editingHere = band.children.some((c) => String(c.id) === String(editingId));
     const open = expanded.has(band.start) || editingHere;
+    const picking = reclassifyBand === band.start;
     const L = LANE[band.lane];
     const apps = bandApps(band);
     const kids = band.children.map((c) => String(c.id) === String(editingId) ? editorForm(c) : kidHtml(c)).join("");
-    return `<div class="band${open ? " open" : ""}" data-band="${band.start}" style="--lane:${laneColor(band.lane)}">
+    return `<div class="band${open ? " open" : ""}${picking ? " picking" : ""}" data-band="${band.start}" style="--lane:${laneColor(band.lane)}">
       <div class="band-gut">${fmt12(band.start)}</div>
       <div class="band-body">
         <div class="band-head" data-act="toggle">
@@ -953,8 +986,12 @@
             <div class="band-meta"><span class="band-lane">${L.name}</span> · ${band.children.length} ${band.children.length === 1 ? "thing" : "things"}${apps.length ? ` · ${escapeHtml(apps.slice(0, 3).join(", "))}${apps.length > 3 ? "…" : ""}` : ""}</div>
           </div>
           <div class="band-time"><b>${fmtDur(band.dur)}</b>${fmt12(band.start)}–${fmt12(band.end)}</div>
+          <button class="band-tag" data-act="reclassify" data-band="${band.start}" title="Not ${L.name.toLowerCase()}? Change the type" aria-label="Change type">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 12 22l-9-9V4a1 1 0 0 1 1-1h9z"/><circle cx="7.5" cy="7.5" r="1.3" fill="currentColor" stroke="none"/></svg>
+          </button>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
         </div>
+        ${picking ? laneChipsHtml(band) : ""}
         <div class="kids">${kids}</div>
       </div>
     </div>`;
@@ -1035,13 +1072,15 @@
         <div class="fb-legend">
           <span class="k"><b>${fmtDur(total)}</b> tracked</span>
           ${key(prod.productive, "--focus", "focused")}
-          ${key(prod.distracting, "--social", "distracted")}
+          ${key(prod.distracting, "--social", "off-task")}
           ${key(prod.neutral, "--idle", "idle")}
         </div>
+        <div class="fb-note">Estimated from your screen — open a block to correct its type.</div>
       </div>` : "";
 
     // Lane legend (only lanes present)
     const bands = buildBands(blocks);
+    currentBands = bands;
     const present = LANE_ORDER.filter((l) => bands.some((b) => b.lane === l));
     const legend = present.map((l) => `<span class="leg"><span class="d" style="background:${laneColor(l)}"></span>${LANE[l].name}</span>`).join("");
     const toolbar = `<div class="cal-toolbar">
@@ -1094,6 +1133,8 @@
     else if (act === "edit") { editingId = btn.dataset.id; renderJournal(); journalPage.querySelector(".bedit")?.scrollIntoView({ block: "center", behavior: "nearest" }); }
     else if (act === "cancel") { editingId = null; newRange = null; renderJournal(); }
     else if (act === "del") { deleteBlock(btn.dataset.id); }
+    else if (act === "reclassify") { reclassifyBand = reclassifyBand === btn.dataset.band ? null : btn.dataset.band; renderJournal(); }
+    else if (act === "setlane") { setBandLane(btn.dataset.band, btn.dataset.lane); }
   });
   journalPage.addEventListener("change", (e) => {
     if (e.target.id === "date-jump" && e.target.value) openDay(e.target.value);
@@ -1139,6 +1180,21 @@
       await reloadDay();
       loadDates();
     } catch { /* leave the view as-is on failure */ }
+  }
+
+  // Reclassify a whole band's type (the user correcting the AI's focus/social guess).
+  async function setBandLane(bandStart, lane) {
+    const band = currentBands.find((b) => b.start === bandStart);
+    if (!band) return;
+    const ids = band.children.map((c) => c.id).filter((x) => x != null);
+    reclassifyBand = null;
+    try {
+      await fetch(`/journal/${currentDate}/reclassify`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, category: LANE_CANON[lane] || "other" }),
+      });
+      await reloadDay();
+    } catch { renderJournal(); }
   }
 
   // ---------- mobile drawer ----------

@@ -210,6 +210,25 @@ def edit_block(
     return {"block": block}
 
 
+class Reclassify(BaseModel):
+    ids: list[int]
+    category: str
+
+
+@app.post("/journal/{date}/reclassify")
+def reclassify(date: str, req: Reclassify, memory: MemoryAgent = Depends(get_memory)) -> dict:
+    """Correct the AI's productivity guess for a whole band: set several blocks' category at once
+    (the lane, and thus the colour and focus-scoring, follows from category). Lets the user say
+    'that was actually work / that was social' in one tap."""
+    updated = 0
+    for bid in req.ids:
+        b = memory.store.get_block(bid)
+        if b and b["date"] == date:
+            memory.store.update_block(bid, category=req.category)
+            updated += 1
+    return {"updated": updated}
+
+
 @app.delete("/journal/{date}/blocks/{block_id}")
 def remove_block(date: str, block_id: int, memory: MemoryAgent = Depends(get_memory)) -> dict:
     existing = memory.store.get_block(block_id)
