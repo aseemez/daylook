@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from datetime import date as date_cls
 from pathlib import Path
@@ -51,6 +52,7 @@ class RootAgent:
         # until a capture is running.
         self._capture_thread: threading.Thread | None = None
         self._capture_stop: threading.Event | None = None
+        self._capture_started_at: float | None = None  # epoch secs, for the live "recording" UI
         self._runner = self._build_runner()
 
     # --- tools (closures over self) ---
@@ -204,6 +206,7 @@ class RootAgent:
         self._capture_stop = stop
         self._capture_thread = threading.Thread(target=_loop, name="daylook-capture", daemon=True)
         self._capture_thread.start()
+        self._capture_started_at = time.time()
         return {
             "status": "started",
             "minutes": minutes or None,
@@ -221,6 +224,7 @@ class RootAgent:
         if not self._capture_running():
             self._capture_thread = None
             self._capture_stop = None
+            self._capture_started_at = None
             return {"status": "not_running"}
 
         if self._capture_stop is not None:
@@ -228,11 +232,17 @@ class RootAgent:
         self._capture_thread.join(timeout=10)
         self._capture_thread = None
         self._capture_stop = None
+        self._capture_started_at = None
         return {"status": "stopped"}
 
     def capture_status(self) -> dict:
-        """Whether a background capture is currently running."""
-        return {"running": self._capture_running()}
+        """Whether a background capture is running, and for how long (seconds)."""
+        running = self._capture_running()
+        elapsed = (
+            int(time.time() - self._capture_started_at)
+            if running and self._capture_started_at is not None else 0
+        )
+        return {"running": running, "elapsed_seconds": elapsed}
 
     def build_llm_agent(self):
         """Return a fresh underlying ``LlmAgent`` (tools included) for an external runner.

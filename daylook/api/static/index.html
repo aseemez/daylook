@@ -114,8 +114,34 @@
   .day-item.active .d-sub { color: color-mix(in srgb, var(--ink-2) 90%, transparent); }
   .sb-empty { padding: 6px 12px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 
-  .sb-foot { flex: 0 0 auto; padding: 9px 14px 9px 16px; border-top: 1px solid var(--line);
-    display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sb-foot { flex: 0 0 auto; padding: 10px 14px 12px; border-top: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 9px; }
+  /* Always-visible capture control: the user can see it's recording and stop in one click. */
+  .cap { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px;
+    padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+    color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease; }
+  .cap:hover { border-color: var(--accent); }
+  .cap-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+  .cap-text { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cap-icon { display: grid; place-items: center; color: var(--ink-2); flex: 0 0 auto; }
+  .cap-icon svg { width: 15px; height: 15px; }
+  .cap-icon .stop { display: none; }
+  .cap.on { border-color: color-mix(in srgb, var(--rec) 55%, var(--line)); background: color-mix(in srgb, var(--rec) 12%, var(--surface)); }
+  .cap.on .cap-dot { background: var(--rec); }
+  .cap.on .cap-text { color: var(--rec); }
+  .cap.on .cap-icon { color: var(--rec); }
+  .cap.on .cap-icon .play { display: none; }
+  .cap.on .cap-icon .stop { display: block; }
+  @media (prefers-reduced-motion: no-preference) {
+    .cap.on .cap-dot { animation: recpulse 1.6s ease-in-out infinite; }
+  }
+  @keyframes recpulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 55%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--rec) 0%, transparent); } }
+  .sb-foot-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sb-privacy { margin: 0; font-size: 10.5px; color: var(--muted); text-align: center; }
+  :root { --rec: #D64545; }
+  :root[data-theme="dark"] { --rec: #F26D6D; }
+  @media (prefers-color-scheme: dark) { :root { --rec: #F26D6D; } }
   .theme-toggle { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line);
     background: var(--surface); color: var(--ink-2); cursor: pointer; display: grid; place-items: center; flex: 0 0 auto; }
   .theme-toggle:hover { border-color: var(--accent); color: var(--ink); }
@@ -401,6 +427,11 @@
     .hamburger svg { width: 18px; height: 18px; }
     .topbar .tb-title { font-weight: 700; }
     .topbar .tb-title span { color: var(--accent); }
+    .tb-rec { display: none; margin-left: auto; align-items: center; gap: 6px; font-size: 11px;
+      font-weight: 700; letter-spacing: .06em; color: var(--rec); }
+    .tb-rec.on { display: inline-flex; }
+    .tb-rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
+    @media (prefers-reduced-motion: no-preference) { .tb-rec.on .tb-rec-dot { animation: recpulse 1.6s ease-in-out infinite; } }
     .wrap, form.composer, .journal-page { padding-left: 16px; padding-right: 16px; }
     .band { grid-template-columns: 44px 1fr; gap: 7px; }
     .cal-title { font-size: 20px; }
@@ -435,11 +466,22 @@
   </div>
 
   <div class="sb-foot">
-    <span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></span>
-    <button class="theme-toggle" id="theme-toggle" type="button" title="Light / dark" aria-label="Toggle theme">
-      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <button class="cap" id="cap-toggle" type="button" aria-live="polite">
+      <span class="cap-dot" id="cap-dot"></span>
+      <span class="cap-text" id="cap-text">Start tracking</span>
+      <span class="cap-icon" id="cap-icon" aria-hidden="true">
+        <svg class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        <svg class="stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </span>
     </button>
+    <div class="sb-foot-row">
+      <span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></span>
+      <button class="theme-toggle" id="theme-toggle" type="button" title="Light / dark" aria-label="Toggle theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+    <p class="sb-privacy">Everything stays on your Mac.</p>
   </div>
 </aside>
 <div class="sb-backdrop" id="sb-backdrop"></div>
@@ -451,6 +493,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <span class="tb-title">Day<span>Look</span></span>
+    <span class="tb-rec" id="tb-rec"><span class="tb-rec-dot"></span>REC</span>
   </div>
 
   <!-- Chat view -->
@@ -1111,6 +1154,37 @@
     catch { dot.className = "dot down"; txt.textContent = "Offline"; }
   }
   refreshHealth(); setInterval(refreshHealth, 15000);
+
+  // ---------- capture control (always-visible recording state + one-click stop) ----------
+  let capRunning = false, capBusy = false;
+  function fmtElapsed(s) {
+    const m = Math.floor((s || 0) / 60);
+    if (m < 1) return "just now";
+    if (m < 60) return m + "m";
+    return `${Math.floor(m / 60)}h ${m % 60}m`;
+  }
+  async function refreshCapture() {
+    try {
+      const st = await (await fetch("/capture/status")).json();
+      capRunning = !!st.running;
+      const cap = $("cap-toggle");
+      cap.classList.toggle("on", capRunning);
+      $("cap-text").textContent = capRunning ? `Recording · ${fmtElapsed(st.elapsed_seconds)}` : "Start tracking";
+      cap.setAttribute("aria-label", capRunning ? "Recording your screen — click to stop" : "Start tracking your screen");
+      $("tb-rec")?.classList.toggle("on", capRunning);
+    } catch { /* offline — leave last known state */ }
+  }
+  $("cap-toggle").addEventListener("click", async () => {
+    if (capBusy) return;
+    capBusy = true; $("cap-toggle").disabled = true;
+    try {
+      const url = capRunning ? "/capture/stop" : "/capture/start";
+      await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await refreshCapture();
+    } catch { /* ignore; next poll re-syncs */ }
+    finally { capBusy = false; $("cap-toggle").disabled = false; }
+  });
+  refreshCapture(); setInterval(refreshCapture, 5000);
 
   // ---------- first-run setup ----------
   const backdrop = $("setup-backdrop"), invite = $("invite"), saveBtn = $("save-invite"), setupErr = $("setup-err");

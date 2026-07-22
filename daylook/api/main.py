@@ -219,6 +219,29 @@ def remove_block(date: str, block_id: int, memory: MemoryAgent = Depends(get_mem
     return {"deleted": block_id}
 
 
+class CaptureStart(BaseModel):
+    minutes: int = 0  # 0 = run until stopped
+
+
+@app.get("/capture/status")
+def capture_status(root: RootAgent = Depends(get_root)) -> dict:
+    """Is screen capture running, and for how long — drives the always-visible recording pill."""
+    return root.capture_status()
+
+
+@app.post("/capture/start")
+def capture_start(req: CaptureStart, root: RootAgent = Depends(get_root)) -> dict:
+    """Begin REAL screen capture. This is an explicit, user-initiated consent action (the user
+    clicked Start), the same gate as the chat 'start tracking' command."""
+    return root.start_capture_process(minutes=req.minutes)
+
+
+@app.post("/capture/stop")
+def capture_stop(root: RootAgent = Depends(get_root)) -> dict:
+    """Stop screen capture. Always available so the user can halt recording in one click."""
+    return root.stop_capture_process()
+
+
 @app.get("/health")
 def health() -> dict:
     try:

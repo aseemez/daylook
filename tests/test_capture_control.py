@@ -31,7 +31,7 @@ def test_capture_lifecycle(monkeypatch, tmp_path):
     root = RootAgent()
 
     # idle to begin with; stopping when idle is a safe no-op
-    assert root.capture_status() == {"running": False}
+    assert root.capture_status()["running"] is False
     assert root.stop_capture_process()["status"] == "not_running"
 
     # start with a duration -> one thread, duration forwarded as seconds
