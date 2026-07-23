@@ -447,13 +447,22 @@ def merge_blocks(blocks: list[dict], min_seconds: int | None = None) -> list[dic
 
 # --- Day-level aggregation ------------------------------------------------------------
 
-def aggregate_day(analyses: list[BatchAnalysis]) -> dict:
-    """Combine batch analyses into a day summary: all blocks + time distributions + ranking.
+# The keys a day-summary block carries. Blocks read back from the store also carry db-only
+# columns (id, date, manual); summarize_day strips to this shape so stored and fresh blocks
+# can be combined without leaking storage details into the pipeline.
+_BLOCK_KEYS = ("start", "end", "duration_seconds", "label", "category", "app_name",
+               "source_event_ids")
 
-    Blocks are de-fragmented (see :func:`merge_blocks`) so the day reads as a handful of
-    meaningful activities rather than a minute-by-minute log."""
-    raw = [b.to_dict() for a in analyses for b in a.blocks]
-    merged = merge_blocks(raw)
+
+def summarize_day(date: str | None, blocks: list[dict]) -> dict:
+    """Build the canonical day-summary dict from a flat block list.
+
+    De-fragments the blocks (see :func:`merge_blocks`) and recomputes every aggregate from
+    the surviving blocks, so callers can hand in any mix of freshly-derived and
+    previously-stored blocks (e.g. when a second pipeline run the same day merges with the
+    morning's result) and the totals always match what's shown."""
+    clean = [{k: b[k] for k in _BLOCK_KEYS} for b in sorted(blocks, key=lambda b: b["start"])]
+    merged = merge_blocks(clean)
     by_cat: Counter[str] = Counter()
     by_app: Counter[str] = Counter()
     for b in merged:
@@ -461,10 +470,16 @@ def aggregate_day(analyses: list[BatchAnalysis]) -> dict:
         by_app[b["app_name"]] += b["duration_seconds"]
     total = sum(b["duration_seconds"] for b in merged)
     return {
-        "date": analyses[0].date if analyses else None,
+        "date": date,
         "blocks": merged,
         "total_tracked_seconds": total,
         "time_by_category": dict(by_cat),
         "time_by_app": dict(by_app),
         "app_ranking": [app for app, _ in by_app.most_common()],
     }
+
+
+def aggregate_day(analyses: list[BatchAnalysis]) -> dict:
+    """Combine batch analyses into a day summary: all blocks + time distributions + ranking."""
+    raw = [b.to_dict() for a in analyses for b in a.blocks]
+    return summarize_day(analyses[0].date if analyses else None, raw)

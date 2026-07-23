@@ -177,12 +177,15 @@ def generate(
         img.save(event.image_path(pending), "JPEG", quality=config.IMAGE_JPEG_QUALITY)
         events.append(event)
 
-    for i, (app, title, detail, seconds) in enumerate(scenario, start=1):
-        emit(f"evt_{i:04d}", app, title, detail, t, "switch")
+    # Ids are timestamp-derived, same scheme as real capture — so seeding several days (or
+    # the same day twice at different hours) into one pending/ can never collide the way the
+    # old sequential evt_0001.. ids did.
+    for app, title, detail, seconds in scenario:
+        emit(f"evt_{t:%Y%m%dT%H%M%S}", app, title, detail, t, "switch")
         if heartbeat_seconds:
-            for j, offset in enumerate(range(heartbeat_seconds, seconds, heartbeat_seconds), 1):
-                emit(f"evt_{i:04d}_hb{j:03d}", app, title, detail, t + timedelta(seconds=offset),
-                     "heartbeat")
+            for offset in range(heartbeat_seconds, seconds, heartbeat_seconds):
+                hb_t = t + timedelta(seconds=offset)
+                emit(f"evt_{hb_t:%Y%m%dT%H%M%S}", app, title, detail, hb_t, "heartbeat")
         t = t + timedelta(seconds=seconds)
 
     return events

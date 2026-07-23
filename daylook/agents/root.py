@@ -80,6 +80,10 @@ class RootAgent:
                 "num_events": result["num_events"],
                 "num_blocks": result["num_blocks"],
                 "writeup": result["writeup"],
+                # A backlog (app closed for a few days) is processed per day; each earlier
+                # day got its own journal too. Lets the assistant tell the user that
+                # instead of silently folding three days into one.
+                "also_processed_dates": [d["date"] for d in result.get("days", [])[:-1]],
             }
 
         def show_today(tool_context: ToolContext) -> dict:
@@ -133,7 +137,9 @@ class RootAgent:
             "Routing:\n"
             "- If the user wants to process/generate today's journal or asks what they did "
             "today, call process_today, then present the returned 'writeup' to the user "
-            "VERBATIM (do not summarize or drop the timeline or numbers).\n"
+            "VERBATIM (do not summarize or drop the timeline or numbers). If "
+            "'also_processed_dates' is non-empty, briefly mention those earlier days were "
+            "caught up and journaled too (they're in the sidebar).\n"
             "- If they ask to see the journal again, call show_today.\n"
             "- If they ask about a PAST day or overall history, call ask_history and relay the "
             "answer.\n"

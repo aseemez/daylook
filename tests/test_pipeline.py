@@ -76,4 +76,80 @@ def test_pipeline_handles_empty_pending(tmp_path):
     result = pipe.process_day(pending_dir=tmp_path / "empty")
     assert result["num_blocks"] == 0
     assert "No pending" in result["writeup"]
+    assert result["days"] == []
+    mem.close()
+
+
+def test_multi_day_backlog_files_each_day_separately(tmp_path, monkeypatch):
+    """Three days piled up in pending (app closed / updated mid-week) must become three
+    journals under their own dates — never one mashed day that overwrites a real journal."""
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    from daylook import config
+    pending = config.pending_dir()
+    generate(pending=pending, start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
+    generate(pending=pending, start=datetime(2026, 7, 6, 9, 0, 0), clean=False)
+    generate(pending=pending, start=datetime(2026, 7, 7, 9, 0, 0), clean=False)
+
+    mem = MemoryAgent(db_path=tmp_path / "journal.sqlite")
+    pipe = Pipeline(mem, analyze_fn=_fake_analyze, journal_fn=lambda d, **k: f"J {d['date']}")
+    result = pipe.process_day()
+
+    assert [d["date"] for d in result["days"]] == ["2026-07-05", "2026-07-06", "2026-07-07"]
+    # top-level result describes the most recent day (what the user usually asked about)
+    assert result["date"] == "2026-07-07"
+    for date in ("2026-07-05", "2026-07-06", "2026-07-07"):
+        row = mem.get_journal(date)
+        assert row is not None and row["writeup"] == f"J {date}"
+        assert mem.get_blocks(date), f"no blocks stored for {date}"
+    # every block landed under the date its events belong to
+    for date in ("2026-07-05", "2026-07-06", "2026-07-07"):
+        for b in mem.get_blocks(date):
+            assert b["start"].startswith(date)
+    assert not list(pending.glob("*.json"))
+    mem.close()
+
+
+def test_second_run_same_day_keeps_morning_blocks(tmp_path, monkeypatch):
+    """Processing at noon then again at night must ADD the afternoon to the day's journal,
+    not replace the morning (the noon run already moved its events out of pending)."""
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    from daylook import config
+    pending = config.pending_dir()
+
+    mem = MemoryAgent(db_path=tmp_path / "journal.sqlite")
+    pipe = Pipeline(mem, analyze_fn=_fake_analyze, journal_fn=lambda d, **k: f"{len(d['blocks'])} blocks")
+
+    generate(pending=pending, start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
+    first = pipe.process_day()
+    morning_ids = {eid for b in mem.get_blocks("2026-07-05") for eid in b["source_event_ids"]}
+    assert morning_ids
+
+    generate(pending=pending, start=datetime(2026, 7, 5, 14, 0, 0), clean=False)
+    second = pipe.process_day()
+
+    stored_ids = {eid for b in mem.get_blocks("2026-07-05") for eid in b["source_event_ids"]}
+    assert morning_ids <= stored_ids, "morning events vanished from the day on the second run"
+    assert len(stored_ids) > len(morning_ids), "afternoon events were not added"
+    assert second["date"] == "2026-07-05"
+    # totals reflect the whole day, not just the second run
+    assert second["day"]["total_tracked_seconds"] >= first["day"]["total_tracked_seconds"]
+    mem.close()
+
+
+def test_manual_blocks_survive_reprocessing(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    from daylook import config
+    pending = config.pending_dir()
+
+    mem = MemoryAgent(db_path=tmp_path / "journal.sqlite")
+    mem.add_block(
+        date="2026-07-05", start="2026-07-05T08:00:00", end="2026-07-05T08:30:00",
+        label="Offline standup", app_name="", category="meeting", duration_seconds=1800,
+    )
+    pipe = Pipeline(mem, analyze_fn=_fake_analyze, journal_fn=lambda d, **k: "x")
+    generate(pending=pending, start=datetime(2026, 7, 5, 9, 0, 0), clean=True)
+    pipe.process_day()
+
+    manual = [b for b in mem.get_blocks("2026-07-05") if b["manual"]]
+    assert len(manual) == 1 and manual[0]["label"] == "Offline standup"
     mem.close()
