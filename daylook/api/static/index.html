@@ -150,6 +150,17 @@
   .cap.on { border-color: color-mix(in srgb, var(--rec) 55%, var(--line)); background: color-mix(in srgb, var(--rec) 12%, var(--surface)); }
   .cap.on .cap-dot { background: var(--rec); }
   .cap.on .cap-text { color: var(--rec); }
+  .cap-row { display: flex; gap: 8px; align-items: stretch; }
+  .cap-row .cap { flex: 1; min-width: 0; }
+  .cap-pause { display: grid; place-items: center; width: 40px; min-height: 40px; flex: 0 0 auto;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+    color: var(--ink-2); cursor: pointer; }
+  .cap-pause:hover { border-color: var(--accent); }
+  .cap-pause svg { width: 14px; height: 14px; }
+  .cap-pause .resume { display: none; }
+  .cap-pause.paused .pause { display: none; }
+  .cap-pause.paused .resume { display: block; }
+  .cap-pause[hidden] { display: none; }
   .cap-warn { display: none; margin-top: 8px; padding: 9px 11px; border-radius: 10px;
     font-size: 12.5px; line-height: 1.45; color: var(--ink);
     border: 1px solid color-mix(in srgb, var(--rec) 50%, var(--line));
@@ -515,14 +526,20 @@
   </div>
 
   <div class="sb-foot">
-    <button class="cap" id="cap-toggle" type="button" aria-live="polite">
-      <span class="cap-dot" id="cap-dot"></span>
-      <span class="cap-text" id="cap-text">Start tracking</span>
-      <span class="cap-icon" id="cap-icon" aria-hidden="true">
-        <svg class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-        <svg class="stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-      </span>
-    </button>
+    <div class="cap-row">
+      <button class="cap" id="cap-toggle" type="button" aria-live="polite">
+        <span class="cap-dot" id="cap-dot"></span>
+        <span class="cap-text" id="cap-text">Start tracking</span>
+        <span class="cap-icon" id="cap-icon" aria-hidden="true">
+          <svg class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg class="stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </span>
+      </button>
+      <button class="cap-pause" id="cap-pause" type="button" hidden aria-label="Pause tracking">
+        <svg class="pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+        <svg class="resume" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+    </div>
     <div class="cap-warn" id="cap-warn" role="alert">
       <strong>Can’t see your screen.</strong> macOS revokes Screen Recording after app
       updates. Turn Daylook on in System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security →
@@ -1264,7 +1281,7 @@
   refreshHealth(); setInterval(refreshHealth, 15000);
 
   // ---------- capture control (always-visible recording state + one-click stop) ----------
-  let capRunning = false, capBusy = false;
+  let capRunning = false, capPaused = false, capBusy = false;
   function fmtElapsed(s) {
     const m = Math.floor((s || 0) / 60);
     if (m < 1) return "just now";
@@ -1275,17 +1292,39 @@
     try {
       const st = await (await fetch("/capture/status")).json();
       capRunning = !!st.running;
+      capPaused = !!st.paused;
+      const autoPaused = !!st.auto_paused, blind = !!st.blind;
       const cap = $("cap-toggle");
-      cap.classList.toggle("on", capRunning);
-      const blind = !!st.blind;
-      $("cap-text").textContent = capRunning
-        ? (blind ? "Recording · can’t see screen" : `Recording · ${fmtElapsed(st.elapsed_seconds)}`)
-        : "Start tracking";
+      // The pill must always say what is ACTUALLY happening — paused or idle must never
+      // look like recording (that's how a user loses an afternoon to a forgotten pause).
+      cap.classList.toggle("on", capRunning && !capPaused && !autoPaused);
+      $("cap-text").textContent = !capRunning ? "Start tracking"
+        : capPaused ? "Paused — nothing is recorded"
+        : blind ? "Recording · can’t see screen"
+        : autoPaused ? "Idle · paused automatically"
+        : `Recording · ${fmtElapsed(st.elapsed_seconds)}`;
       cap.setAttribute("aria-label", capRunning ? "Recording your screen — click to stop" : "Start tracking your screen");
-      $("tb-rec")?.classList.toggle("on", capRunning);
-      $("cap-warn")?.classList.toggle("on", blind);
+      $("tb-rec")?.classList.toggle("on", capRunning && !capPaused && !autoPaused);
+      $("cap-warn")?.classList.toggle("on", blind && !capPaused);
+      const pauseBtn = $("cap-pause");
+      if (pauseBtn) {
+        pauseBtn.hidden = !capRunning;
+        pauseBtn.classList.toggle("paused", capPaused);
+        pauseBtn.setAttribute("aria-label", capPaused ? "Resume tracking" : "Pause tracking");
+        pauseBtn.title = capPaused ? "Resume tracking" : "Pause tracking";
+      }
     } catch { /* offline — leave last known state */ }
   }
+  $("cap-pause").addEventListener("click", async () => {
+    if (capBusy) return;
+    capBusy = true;
+    try {
+      await fetch(capPaused ? "/capture/resume" : "/capture/pause",
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await refreshCapture();
+    } catch { /* next poll re-syncs */ }
+    finally { capBusy = false; }
+  });
   $("cap-toggle").addEventListener("click", async () => {
     if (capBusy) return;
     capBusy = true; $("cap-toggle").disabled = true;

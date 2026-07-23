@@ -43,3 +43,35 @@ def test_capture_status_start_stop():
         assert c.get("/capture/status").json()["running"] is False
     finally:
         app.dependency_overrides.clear()
+
+
+def test_capture_pause_resume_endpoints():
+    class _PausableRoot(_FakeRoot):
+        def __init__(self):
+            super().__init__()
+            self.paused = False
+
+        def pause_capture_process(self):
+            if not self.running:
+                return {"status": "not_running"}
+            self.paused = True
+            return {"status": "paused"}
+
+        def resume_capture_process(self):
+            if not self.running:
+                return {"status": "not_running"}
+            self.paused = False
+            return {"status": "recording"}
+
+    fake = _PausableRoot()
+    app.dependency_overrides[get_root] = lambda: fake
+    try:
+        c = TestClient(app)
+        assert c.post("/capture/pause").json()["status"] == "not_running"
+        c.post("/capture/start", json={})
+        assert c.post("/capture/pause").json()["status"] == "paused"
+        assert fake.paused is True
+        assert c.post("/capture/resume").json()["status"] == "recording"
+        assert fake.paused is False
+    finally:
+        app.dependency_overrides.clear()

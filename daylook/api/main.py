@@ -282,6 +282,18 @@ def capture_stop(root: RootAgent = Depends(get_root)) -> dict:
     return root.stop_capture_process()
 
 
+@app.post("/capture/pause")
+def capture_pause(root: RootAgent = Depends(get_root)) -> dict:
+    """Hold recording without ending the session — nothing is captured until resume."""
+    return root.pause_capture_process()
+
+
+@app.post("/capture/resume")
+def capture_resume(root: RootAgent = Depends(get_root)) -> dict:
+    """Resume a paused recording."""
+    return root.resume_capture_process()
+
+
 @app.get("/health")
 def health() -> dict:
     try:

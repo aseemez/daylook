@@ -59,6 +59,7 @@ class RootAgent:
         # until a capture is running.
         self._capture_thread: threading.Thread | None = None
         self._capture_stop: threading.Event | None = None
+        self._capture_pause: threading.Event | None = None  # set = user asked to hold
         self._capture_started_at: float | None = None  # epoch secs, for the live "recording" UI
         self._runner = self._build_runner()
 
@@ -137,6 +138,15 @@ class RootAgent:
             """Stop the background screen capture previously started with start_capture."""
             return root.stop_capture_process()
 
+        def pause_capture() -> dict:
+            """Temporarily PAUSE screen capture without ending the session (nothing is
+            recorded while paused). Use when the user asks to pause/hold tracking."""
+            return root.pause_capture_process()
+
+        def resume_capture() -> dict:
+            """Resume screen capture after a pause."""
+            return root.resume_capture_process()
+
         instruction = (
             "You are Daylook, a personal work-journal assistant. You help the user turn "
             "their screen activity into a readable daily timeline and answer questions about "
@@ -157,6 +167,8 @@ class RootAgent:
             "'begin capture', 'record my screen'), call start_capture. This starts REAL screen "
             "recording, so only do it on a clear request; pass minutes if they name a duration. "
             "Tell them capture has started.\n"
+            "- If they ask to PAUSE tracking (hold it, keep the session), call pause_capture; "
+            "to RESUME after a pause, call resume_capture. Confirm briefly either way.\n"
             "- If they ask to STOP tracking/capturing, call stop_capture and simply confirm that "
             "capture has stopped. Do NOT build, process, or summarize the day here — never call "
             "process_today off the back of a stop request. Wait until the user explicitly asks "
@@ -170,7 +182,7 @@ class RootAgent:
             instruction=instruction,
             tools=[
                 process_today, show_today, remember_preference, ask_history,
-                start_capture, stop_capture,
+                start_capture, stop_capture, pause_capture, resume_capture,
             ],
         )
 
@@ -201,6 +213,7 @@ class RootAgent:
 
         config.ensure_dirs()
         stop = threading.Event()
+        pause = threading.Event()
         duration = (minutes * 60) if (minutes and minutes > 0) else None
 
         def _loop() -> None:
@@ -210,6 +223,7 @@ class RootAgent:
                     dry_run=dry_run,
                     duration_seconds=duration,
                     stop_event=stop,
+                    pause_event=pause,
                 )
             except Exception as e:  # never let a capture error take down the app
                 from daylook.observability import observe
@@ -217,6 +231,7 @@ class RootAgent:
                     pass
 
         self._capture_stop = stop
+        self._capture_pause = pause
         self._capture_thread = threading.Thread(target=_loop, name="daylook-capture", daemon=True)
         self._capture_thread.start()
         self._capture_started_at = time.time()
@@ -245,8 +260,29 @@ class RootAgent:
         self._capture_thread.join(timeout=10)
         self._capture_thread = None
         self._capture_stop = None
+        self._capture_pause = None
         self._capture_started_at = None
         return {"status": "stopped"}
+
+    def pause_capture_process(self) -> dict:
+        """Hold recording without ending the session. Nothing is captured while paused; the
+        thread (and the OS permission context) stays alive so resume is instant. Idempotent.
+
+        Why not just stop? Stop is fine too — but pause keeps the elapsed-session framing in
+        the UI ('Paused' vs a stopped pill that looks like tracking was never on), which is
+        what saves a user from thinking they're recording when they aren't (and vice versa)."""
+        if not self._capture_running() or self._capture_pause is None:
+            return {"status": "not_running"}
+        self._capture_pause.set()
+        return {"status": "paused"}
+
+    def resume_capture_process(self) -> dict:
+        """Resume a paused recording. The capture loop re-debounces whatever is frontmost, so
+        the first post-resume event is a real switch — paused time is never back-credited."""
+        if not self._capture_running() or self._capture_pause is None:
+            return {"status": "not_running"}
+        self._capture_pause.clear()
+        return {"status": "recording"}
 
     def capture_status(self) -> dict:
         """Whether a background capture is running, for how long (seconds), and whether it can
@@ -259,6 +295,9 @@ class RootAgent:
         )
         from daylook.capture_script.real_capture import read_health
         health = read_health()
+        paused = bool(
+            running and self._capture_pause is not None and self._capture_pause.is_set()
+        )
         return {
             "running": running,
             "elapsed_seconds": elapsed,
@@ -266,6 +305,12 @@ class RootAgent:
             # convenience flag for the UI: only warn about a CURRENT capture — a stale health
             # file from a long-finished run shouldn't nag after the app was fixed/re-granted
             "blind": bool(running and health and health.get("blind")),
+            "paused": paused,
+            # auto-pause is decided inside the capture loop (stale screen); it reports via
+            # the health file. Manual pause outranks it in what the UI should say.
+            "auto_paused": bool(
+                running and not paused and health and health.get("state") == "auto_paused"
+            ),
         }
 
     def build_llm_agent(self):
