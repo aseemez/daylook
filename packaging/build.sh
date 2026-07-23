@@ -47,15 +47,33 @@ if [[ ! -x "$BIN" ]]; then
     exit 1
 fi
 
-echo "==> Ad-hoc code-signing the bundle (stable identity)"
-# PyInstaller already ad-hoc signs, but we re-sign the whole bundle deeply and deterministically
-# so every launch presents the SAME code identity to macOS. That is what lets the one-time
-# Screen Recording grant STICK across launches for an unsigned (no-$99-Developer-ID) app —
-# combined with in-process capture (the app itself records, not a separate child) and the user
-# keeping the app in /Applications with quarantine removed. It does NOT remove the first-open
-# Gatekeeper prompt (that needs a paid Developer ID + notarization).
-codesign --force --deep --sign - "$APP"
-codesign --verify --deep --strict "$APP" && echo "    signature OK ($(codesign -dv "$APP" 2>&1 | grep -o 'Signature=adhoc'))"
+echo "==> Code-signing the bundle"
+# The signing identity decides whether macOS permissions SURVIVE A REBUILD. TCC (Screen
+# Recording etc.) keys off the app's designated requirement:
+#   * ad-hoc ("-"): the requirement IS the binary's hash, so every rebuild is a brand-new
+#     identity and macOS silently revokes the grant — the app then captures only the desktop
+#     wallpaper while believing it works (this cost two days of journals). Grants only stick
+#     across LAUNCHES of one unmodified build.
+#   * a real certificate (even a free "Apple Development" one from Xcode): the requirement
+#     anchors to the cert + bundle id, so rebuilds keep the same identity and the one-time
+#     grant sticks across updates too.
+# CODESIGN_IDENTITY overrides; otherwise auto-pick the first Apple Development/Developer ID
+# cert in the keychain, falling back to ad-hoc (with a loud warning) if none exists. Neither
+# removes the first-open Gatekeeper prompt (that needs a paid Developer ID + notarization).
+IDENTITY="${CODESIGN_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]]; then
+    IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+        | grep -oE '"(Developer ID Application|Apple Development)[^"]*"' | head -1 | tr -d '"')" || true
+fi
+if [[ -n "$IDENTITY" ]]; then
+    echo "    signing with: $IDENTITY"
+    codesign --force --deep --sign "$IDENTITY" "$APP"
+else
+    echo "    WARNING: no signing certificate found — falling back to ad-hoc."
+    echo "    Screen Recording permission will be REVOKED every time this app is rebuilt."
+    codesign --force --deep --sign - "$APP"
+fi
+codesign --verify --deep --strict "$APP" && echo "    signature OK ($(codesign -dv "$APP" 2>&1 | grep -oE 'Signature=adhoc|TeamIdentifier=[A-Z0-9]+' | head -1))"
 # Strip quarantine locally so our own smoke run doesn't get App-Translocated to a random path
 # (which would itself defeat TCC persistence during testing).
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
