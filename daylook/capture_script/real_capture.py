@@ -37,7 +37,9 @@ Run it:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
+import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -123,6 +125,98 @@ def heartbeat_due(
         and state.candidate is None
         and now - last_emit_at >= interval
     )
+
+
+# --- Capture health: can we actually SEE the screen? ----------------------------------
+#
+# macOS ties the Screen Recording grant to the app's code signature. An ad-hoc-signed app
+# gets a NEW signature on every rebuild, so after an update macOS silently revokes the
+# grant — and instead of failing, screen grabs return only the desktop wallpaper. The
+# journal then honestly reports "away from computer, desktop visible" for a day the user
+# worked through, which is worse than an error. Two independent detectors close that gap:
+#
+#   1. Permission preflight (authoritative): ask macOS directly at capture start.
+#   2. Identical-frame detection (belt & braces): a SWITCH event means the frontmost window
+#      changed, so the captured pixels must change too. Several consecutive switches whose
+#      screenshots are byte-identical to the previous frame is impossible for real capture —
+#      the frame is frozen. Heartbeats deliberately don't count: a static screen while the
+#      user reads the same page for minutes is normal.
+#
+# Both feed ``capture_health.json`` in the Daylook home; /capture/status surfaces it and the
+# UI turns it into a "can't see your screen" warning instead of a silent bad journal.
+
+class BlindnessDetector:
+    """Pure frozen-frame detector (unit-testable without a screen). Feed it the hash of every
+    written frame; ``blind`` trips after ``threshold`` consecutive switch frames that were
+    byte-identical to the frame before them. Any changed frame resets it — so if the user
+    re-grants permission mid-run, the warning clears on the next real switch."""
+
+    def __init__(self, threshold: int = 3):
+        self.threshold = threshold
+        self.identical_switches = 0
+        self._prev_hash: str | None = None
+
+    def observe(self, kind: str, image_hash: str) -> None:
+        if self._prev_hash is not None and image_hash == self._prev_hash:
+            if kind == "switch":
+                self.identical_switches += 1
+        elif image_hash != self._prev_hash:
+            self.identical_switches = 0
+        self._prev_hash = image_hash
+
+    @property
+    def blind(self) -> bool:
+        return self.identical_switches >= self.threshold
+
+
+def preflight_screen_permission() -> bool | None:
+    """Ask macOS whether this process may record the screen. None = can't tell (no Quartz,
+    or an OS too old for the preflight API) — treated as 'assume ok', never as an error."""
+    try:
+        from Quartz import CGPreflightScreenCaptureAccess  # type: ignore
+        return bool(CGPreflightScreenCaptureAccess())
+    except Exception:
+        return None
+
+
+def request_screen_permission() -> None:
+    """Trigger the macOS Screen Recording prompt / System Settings entry (once per app
+    identity — repeat calls are a no-op, so this is safe to call on every blind start)."""
+    try:
+        from Quartz import CGRequestScreenCaptureAccess  # type: ignore
+        CGRequestScreenCaptureAccess()
+    except Exception:
+        pass
+
+
+def write_health(
+    permission_granted: bool | None,
+    detector: BlindnessDetector | None,
+    running: bool,
+) -> None:
+    """Persist the current capture-vision verdict for the app/UI to read. Best-effort —
+    health reporting must never be able to crash the capture loop itself."""
+    try:
+        blind = bool(
+            permission_granted is False or (detector is not None and detector.blind)
+        )
+        config.capture_health_path().write_text(json.dumps({
+            "permission_granted": permission_granted,
+            "blind": blind,
+            "identical_switches": detector.identical_switches if detector else 0,
+            "running": running,
+            "updated": datetime.now().isoformat(timespec="seconds"),
+        }))
+    except OSError:
+        pass
+
+
+def read_health() -> dict | None:
+    """The last written capture-health verdict, or None if capture never reported one."""
+    try:
+        return json.loads(config.capture_health_path().read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 # --- OS access (lazily imported; only touched when actually capturing) ----------------
@@ -236,10 +330,17 @@ def make_event(
     )
 
 
-def write_event(event: CaptureEvent, image: Image.Image, pending: Path) -> None:
-    """Persist the sidecar + downscaled JPEG — the same pair shape the mock generator writes."""
+def write_event(event: CaptureEvent, image: Image.Image, pending: Path) -> str:
+    """Persist the sidecar + downscaled JPEG — the same pair shape the mock generator writes.
+
+    Returns the JPEG's md5 so the caller can feed the :class:`BlindnessDetector` without
+    re-reading the file it just wrote."""
     event.write_sidecar(pending)
-    _downscale(image).save(event.image_path(pending), "JPEG", quality=config.IMAGE_JPEG_QUALITY)
+    buf = io.BytesIO()
+    _downscale(image).save(buf, "JPEG", quality=config.IMAGE_JPEG_QUALITY)
+    data = buf.getvalue()
+    event.image_path(pending).write_bytes(data)
+    return hashlib.md5(data).hexdigest()
 
 
 # --- Capture loop ---------------------------------------------------------------------
@@ -281,6 +382,24 @@ def run(
     start = time.monotonic()
     last_emit_at = start  # heartbeat clock; reset on every emission of either kind
 
+    # Capture-vision health: preflight the Screen Recording grant, then watch for frozen
+    # frames while running. If the grant is missing (classic cause: an app update changed the
+    # code signature and macOS silently revoked it), say so loudly and nudge System Settings —
+    # capturing wallpaper for a day while reporting "away" is the one failure this layer must
+    # never be silent about.
+    detector = BlindnessDetector()
+    permission: bool | None = None
+    was_blind = False
+    if not dry_run:
+        permission = preflight_screen_permission()
+        if permission is False:
+            print("[real_capture] WARNING: macOS Screen Recording permission is NOT granted "
+                  "to this app — screenshots will show only the wallpaper. Grant it in "
+                  "System Settings > Privacy & Security > Screen Recording (this resets "
+                  "after app updates).")
+            request_screen_permission()
+        write_health(permission, detector, running=True)
+
     stop_note = "Ctrl-C to stop" if duration_seconds is None else (
         f"auto-stops in {duration_seconds/60:.0f} min (or Ctrl-C)")
     hb_note = f", heartbeat={heartbeat_seconds:.0f}s" if heartbeat_seconds > 0 else ""
@@ -309,9 +428,18 @@ def run(
                     print(f"[{kind}] {when:%H:%M:%S}  {app_name} — {window_title!r}")
                 else:
                     event = make_event(app_name, window_title, when, kind=kind)
-                    write_event(event, backend.grab_primary(), pending)
+                    frame_hash = write_event(event, backend.grab_primary(), pending)
                     written += 1
                     print(f"[event]  {event.event_id}  ({kind})  {app_name} — {window_title!r}")
+                    detector.observe(kind, frame_hash)
+                    write_health(permission, detector, running=True)
+                    if detector.blind and not was_blind:
+                        print("[real_capture] WARNING: the last "
+                              f"{detector.identical_switches} window switches produced "
+                              "byte-identical screenshots — capture appears BLIND (frozen "
+                              "frame / revoked Screen Recording permission). Re-grant it in "
+                              "System Settings > Privacy & Security > Screen Recording.")
+                    was_blind = detector.blind
                 if once or (max_events is not None and written >= max_events):
                     break
             # Interruptible wait: a threading.Event lets an in-process stop land within one
@@ -324,6 +452,8 @@ def run(
     except KeyboardInterrupt:
         print(f"\n[real_capture] stopped. Wrote {written} event(s) to {pending}.")
     finally:
+        if not dry_run:
+            write_health(permission, detector, running=False)
         backend.close()
     return written
 

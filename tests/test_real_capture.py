@@ -83,3 +83,69 @@ def test_write_event_matches_on_disk_contract(tmp_path):
 
     with Image.open(image) as im:
         assert max(im.size) <= config.IMAGE_MAX_EDGE
+
+
+# --- capture health: blindness detection ----------------------------------------------
+# Why this exists: macOS silently revokes Screen Recording when the app's code signature
+# changes (every ad-hoc rebuild). Capture then "works" but records only the wallpaper — two
+# days of real usage were lost to exactly that. These tests pin the detection logic.
+
+def test_blindness_detector_trips_on_identical_switch_frames():
+    d = rc.BlindnessDetector(threshold=3)
+    d.observe("switch", "aaaa")               # first frame: nothing to compare against
+    for _ in range(3):
+        d.observe("switch", "aaaa")           # window changed, pixels didn't — impossible
+    assert d.blind is True
+
+
+def test_blindness_detector_ignores_static_heartbeats():
+    """Reading the same page for minutes = identical heartbeat frames. That's normal and
+    must never be flagged as blindness."""
+    d = rc.BlindnessDetector(threshold=3)
+    d.observe("switch", "aaaa")
+    for _ in range(20):
+        d.observe("heartbeat", "aaaa")
+    assert d.blind is False
+
+
+def test_blindness_detector_resets_on_changed_frame():
+    """Re-granting permission mid-run makes frames differ again — warning must clear."""
+    d = rc.BlindnessDetector(threshold=3)
+    d.observe("switch", "aaaa")
+    d.observe("switch", "aaaa")
+    d.observe("switch", "aaaa")
+    d.observe("switch", "bbbb")               # a real frame change
+    assert d.identical_switches == 0
+    for _ in range(3):
+        d.observe("switch", "bbbb")
+    assert d.blind is True                    # and it can trip again afterwards
+
+
+def test_write_event_returns_stable_frame_hash(tmp_path):
+    img = Image.new("RGB", (100, 60), (10, 20, 30))
+    e1 = rc.make_event("Cursor", "a", datetime(2026, 7, 5, 9, 0, 0))
+    e2 = rc.make_event("Chrome", "b", datetime(2026, 7, 5, 9, 0, 5))
+    h1 = rc.write_event(e1, img, tmp_path)
+    h2 = rc.write_event(e2, img.copy(), tmp_path)
+    assert h1 == h2                           # same pixels -> same hash (the blindness signal)
+    assert rc.write_event(e1, Image.new("RGB", (100, 60), (200, 0, 0)), tmp_path) != h1
+
+
+def test_health_file_roundtrip_and_status_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    d = rc.BlindnessDetector(threshold=1)
+    d.observe("switch", "x")
+    d.observe("switch", "x")
+    assert d.blind
+    rc.write_health(permission_granted=True, detector=d, running=True)
+    h = rc.read_health()
+    assert h is not None and h["blind"] is True and h["permission_granted"] is True
+
+    # permission denied alone also means blind, even with no frozen frames yet
+    rc.write_health(permission_granted=False, detector=rc.BlindnessDetector(), running=True)
+    assert rc.read_health()["blind"] is True
+
+
+def test_read_health_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    assert rc.read_health() is None

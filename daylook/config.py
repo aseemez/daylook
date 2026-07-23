@@ -57,6 +57,13 @@ def log_path() -> Path:
     return _home() / "daylook.log"
 
 
+def capture_health_path() -> Path:
+    """Status file the capture loop writes so the app/UI can tell whether capture can
+    actually SEE the screen (macOS silently revokes Screen Recording when the app's code
+    signature changes — e.g. after an update — and capture then records only the wallpaper)."""
+    return _home() / "capture_health.json"
+
+
 def ensure_dirs() -> None:
     """Create the local data directories if they don't exist. Safe to call repeatedly."""
     for d in (pending_dir(), processed_dir(), cache_dir()):

@@ -242,13 +242,24 @@ class RootAgent:
         return {"status": "stopped"}
 
     def capture_status(self) -> dict:
-        """Whether a background capture is running, and for how long (seconds)."""
+        """Whether a background capture is running, for how long (seconds), and whether it can
+        actually SEE the screen (see ``real_capture.write_health`` — a revoked Screen Recording
+        grant silently turns capture into wallpaper shots; the UI must be able to warn)."""
         running = self._capture_running()
         elapsed = (
             int(time.time() - self._capture_started_at)
             if running and self._capture_started_at is not None else 0
         )
-        return {"running": running, "elapsed_seconds": elapsed}
+        from daylook.capture_script.real_capture import read_health
+        health = read_health()
+        return {
+            "running": running,
+            "elapsed_seconds": elapsed,
+            "health": health,
+            # convenience flag for the UI: only warn about a CURRENT capture — a stale health
+            # file from a long-finished run shouldn't nag after the app was fixed/re-granted
+            "blind": bool(running and health and health.get("blind")),
+        }
 
     def build_llm_agent(self):
         """Return a fresh underlying ``LlmAgent`` (tools included) for an external runner.

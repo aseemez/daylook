@@ -63,3 +63,23 @@ def test_dry_run_flag_passed(monkeypatch, tmp_path):
         assert calls[-1]["duration_seconds"] is None  # 0 minutes -> run until stopped
     finally:
         root.stop_capture_process()
+
+
+def test_capture_status_surfaces_blindness_only_while_running(monkeypatch, tmp_path):
+    """The UI warning keys off status['blind']: it must fire during a blind capture and go
+    quiet once capture stops (a stale health file must not nag after the user fixed it)."""
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    from daylook.capture_script import real_capture as rc
+
+    _patch_run(monkeypatch)
+    root = RootAgent()
+
+    rc.write_health(permission_granted=False, detector=None, running=True)
+    assert root.capture_status()["blind"] is False   # not running -> no warning
+
+    root.start_capture_process()
+    assert root.capture_status()["blind"] is True    # running + blind health -> warn
+    assert root.capture_status()["health"]["permission_granted"] is False
+
+    root.stop_capture_process()
+    assert root.capture_status()["blind"] is False

@@ -150,6 +150,12 @@
   .cap.on { border-color: color-mix(in srgb, var(--rec) 55%, var(--line)); background: color-mix(in srgb, var(--rec) 12%, var(--surface)); }
   .cap.on .cap-dot { background: var(--rec); }
   .cap.on .cap-text { color: var(--rec); }
+  .cap-warn { display: none; margin-top: 8px; padding: 9px 11px; border-radius: 10px;
+    font-size: 12.5px; line-height: 1.45; color: var(--ink);
+    border: 1px solid color-mix(in srgb, var(--rec) 50%, var(--line));
+    background: color-mix(in srgb, var(--rec) 10%, var(--surface)); }
+  .cap-warn.on { display: block; }
+  .cap-warn strong { color: var(--rec); }
   .cap.on .cap-icon { color: var(--rec); }
   .cap.on .cap-icon .play { display: none; }
   .cap.on .cap-icon .stop { display: block; }
@@ -517,6 +523,11 @@
         <svg class="stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       </span>
     </button>
+    <div class="cap-warn" id="cap-warn" role="alert">
+      <strong>Can’t see your screen.</strong> Screenshots are coming back blank — macOS
+      revokes Screen Recording after app updates. Re-grant it in System&nbsp;Settings →
+      Privacy&nbsp;&amp;&nbsp;Security → Screen&nbsp;Recording, then restart tracking.
+    </div>
     <div class="sb-foot-row">
       <span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></span>
       <button class="theme-toggle" id="theme-toggle" type="button" title="Light / dark" aria-label="Toggle theme">
@@ -1255,9 +1266,13 @@
       capRunning = !!st.running;
       const cap = $("cap-toggle");
       cap.classList.toggle("on", capRunning);
-      $("cap-text").textContent = capRunning ? `Recording · ${fmtElapsed(st.elapsed_seconds)}` : "Start tracking";
+      const blind = !!st.blind;
+      $("cap-text").textContent = capRunning
+        ? (blind ? "Recording · can’t see screen" : `Recording · ${fmtElapsed(st.elapsed_seconds)}`)
+        : "Start tracking";
       cap.setAttribute("aria-label", capRunning ? "Recording your screen — click to stop" : "Start tracking your screen");
       $("tb-rec")?.classList.toggle("on", capRunning);
+      $("cap-warn")?.classList.toggle("on", blind);
     } catch { /* offline — leave last known state */ }
   }
   $("cap-toggle").addEventListener("click", async () => {
