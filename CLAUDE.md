@@ -25,6 +25,7 @@ A background script. No reasoning lives here.
 - On active-window/app change, produces a `switch` capture event: a screenshot (`mss`, downscaled JPEG) plus a JSON sidecar with `timestamp`, `app_name`, `window_title`, `kind`, and an event id.
 - While the committed window stays stable, emits a `heartbeat` event every `HEARTBEAT_SECONDS` (~12s) — same on-disk shape, `kind: "heartbeat"`. Heartbeats start only after the debounce confirms the user is stably on something.
 - Debounces rapid flicker (ignore switches under ~3s apart); no heartbeats while a switch candidate is pending.
+- Pausable (2026-07-23): a manual pause (UI button / chat / `POST /capture/pause`) suspends all capture without ending the session, and the loop **auto-pauses after `STALE_PAUSE_SECONDS` (10 min) of no visible screen change** — an unattended screen must not be credited as presence. Auto-resume on the first window switch or visible change; manual pause is never auto-resumed. Staleness uses a tolerance diff of a menu-bar-cropped thumbnail (clock repaints and caret blinks must not count as activity); blindness detection (frozen identical frames across switches) stays separate and byte-exact.
 - That's it. This layer is an event source; agents do the rest.
 
 For the initial build, a **mock capture generator** replaces this — it emits realistic fake events into the same folder shape, so the agent pipeline can be built and tested without waiting on real capture.
