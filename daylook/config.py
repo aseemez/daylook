@@ -104,6 +104,14 @@ MAX_IMAGES_PER_BATCH = 12         # screenshots actually sent per vision call (k
 # long idle gap or the final event of the day can't inflate a block's duration.
 MAX_EVENT_DWELL_SECONDS = 15 * 60
 
+# Auto-pause: if the screen content hasn't changed for this long (no window switch, no visible
+# frame change), the user has almost certainly walked away with the screen on — stop emitting
+# heartbeats so an unattended screen can't be credited as presence. Capture resumes by itself
+# on the next window switch or visible change. 0 disables. Trade-off: someone who stares at
+# one motionless page longer than this loses the tail of that stretch — 10 min phantom-credit
+# ceiling was judged worth it.
+STALE_PAUSE_SECONDS = 10 * 60
+
 # A readable journal groups the day into a handful of meaningful blocks, not a minute-by-minute
 # log. Blocks shorter than this get folded into an adjacent block (a 40-second glance at Safari
 # in the middle of a Terminal session shouldn't be its own timeline row). See

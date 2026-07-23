@@ -149,3 +149,57 @@ def test_health_file_roundtrip_and_status_flag(tmp_path, monkeypatch):
 def test_read_health_missing_file(tmp_path, monkeypatch):
     monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     assert rc.read_health() is None
+
+
+# --- auto-pause on a stale screen ------------------------------------------------------
+# Why: heartbeats are proof-of-presence, so an unattended-but-on screen would be credited
+# as work forever. If nothing visibly changes for STALE_PAUSE_SECONDS the loop pauses
+# itself and resumes on the first real activity.
+
+def test_stale_tracker_trips_after_threshold_of_frozen_frames():
+    t = rc.StaleTracker(600, now=0.0)
+    sig = bytes([100] * (96 * 55))
+    t.observe_frame(sig, 0.0)
+    for s in range(60, 600, 60):
+        assert t.observe_frame(sig, float(s)) is False   # frozen frame = no change
+    assert t.stale(599.9) is False
+    assert t.stale(600.0) is True
+
+
+def test_stale_tracker_switch_and_frame_change_reset_the_clock():
+    t = rc.StaleTracker(600, now=0.0)
+    t.observe_frame(bytes([100] * 5280), 0.0)
+    t.observe_switch(500.0)                              # window switch = activity
+    assert t.stale(700.0) is False
+    assert t.observe_frame(bytes([200] * 5280), 1000.0) is True   # big visible change
+    assert t.stale(1100.0) is False
+    assert t.stale(1600.0) is True
+    assert rc.StaleTracker(0, now=0.0).stale(1e9) is False        # 0 disables
+
+
+def test_frames_differ_tolerates_caret_but_sees_scrolling():
+    base = bytes([120] * 5280)
+    # a blinking caret: a couple of thumbnail pixels flip hard — still "same screen"
+    caret = bytearray(base); caret[100] = 255; caret[101] = 255
+    assert rc.frames_differ(base, bytes(caret)) is False
+    # scrolling/typing shifts whole regions — clearly a change
+    scrolled = bytes([120] * 2640 + [180] * 2640)
+    assert rc.frames_differ(base, scrolled) is True
+    assert rc.frames_differ(None, base) is True          # first frame always counts
+
+
+def test_frame_signature_ignores_menu_bar_clock_but_not_content():
+    W, H = 1600, 1000
+    base = Image.new("RGB", (W, H), (230, 228, 220))
+    # clock repaint: change only the top menu-bar strip
+    clock = base.copy()
+    for x in range(W - 200, W - 80):
+        for y in range(0, 24):
+            clock.putpixel((x, y), (0, 0, 0))
+    assert not rc.frames_differ(rc.frame_signature(base), rc.frame_signature(clock))
+    # real content change: a window's worth of dark pixels mid-screen
+    content = base.copy()
+    for x in range(200, 900):
+        for y in range(300, 700):
+            content.putpixel((x, y), (30, 30, 30))
+    assert rc.frames_differ(rc.frame_signature(base), rc.frame_signature(content))

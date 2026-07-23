@@ -169,6 +169,59 @@ class BlindnessDetector:
         return self.identical_switches >= self.threshold
 
 
+def frame_signature(im: Image.Image) -> bytes:
+    """A coarse fingerprint of what's ON the screen, for staleness detection.
+
+    Deliberately NOT the byte hash used for blindness: staleness needs "did anything the
+    user would notice change", not "are the files identical". The frame is shrunk to a
+    small grayscale thumbnail and the top strip is cropped off (the menu bar — its clock
+    repaints every minute and would keep an abandoned screen looking active forever).
+    Comparison happens in :func:`frames_differ` with a tolerance, because exact equality
+    is defeated by a single blinking text caret."""
+    thumb = im.convert("L").resize((96, 60))
+    return thumb.crop((0, 5, 96, 60)).tobytes()
+
+
+def frames_differ(a: bytes | None, b: bytes, threshold: float = 2.0) -> bool:
+    """Whether two frame signatures show a humanly-visible change.
+
+    Mean absolute pixel difference over the thumbnail. Calibration: a blinking caret moves
+    a couple of thumbnail pixels (MAD ≈ 0.1 — below threshold, correctly 'still stale');
+    scrolling or typing a line shifts whole regions (MAD >> 2); even a small video playing
+    in a corner clears the bar (correctly 'active' — watching IS activity)."""
+    if a is None or len(a) != len(b):
+        return True
+    return sum(abs(x - y) for x, y in zip(a, b)) / len(b) >= threshold
+
+
+class StaleTracker:
+    """Pure staleness clock (unit-testable without a screen).
+
+    Tracks when the screen last visibly changed: a window switch always counts as activity;
+    a frame counts only if it differs (per :func:`frames_differ`) from the previous one.
+    ``stale(now)`` says the screen has been frozen past the threshold — the signal to
+    auto-pause so an unattended screen isn't credited as presence."""
+
+    def __init__(self, threshold_seconds: float, now: float):
+        self.threshold = threshold_seconds
+        self.last_change_at = now
+        self._sig: bytes | None = None
+
+    def observe_switch(self, now: float) -> None:
+        self.last_change_at = now
+
+    def observe_frame(self, sig: bytes, now: float) -> bool:
+        """Feed one frame signature; returns True if the screen visibly changed."""
+        if frames_differ(self._sig, sig):
+            self._sig = sig
+            self.last_change_at = now
+            return True
+        return False
+
+    def stale(self, now: float) -> bool:
+        return self.threshold > 0 and (now - self.last_change_at) >= self.threshold
+
+
 def preflight_screen_permission() -> bool | None:
     """Ask macOS whether this process may record the screen. None = can't tell (no Quartz,
     or an OS too old for the preflight API) — treated as 'assume ok', never as an error."""
@@ -193,9 +246,14 @@ def write_health(
     permission_granted: bool | None,
     detector: BlindnessDetector | None,
     running: bool,
+    state: str = "recording",
 ) -> None:
     """Persist the current capture-vision verdict for the app/UI to read. Best-effort —
-    health reporting must never be able to crash the capture loop itself."""
+    health reporting must never be able to crash the capture loop itself.
+
+    ``state`` is the loop's mode: "recording", "paused" (user asked), or "auto_paused"
+    (stale screen — see :class:`StaleTracker`). It rides in the same file because the UI
+    needs mode and blindness together to label the recording pill truthfully."""
     try:
         blind = bool(
             permission_granted is False or (detector is not None and detector.blind)
@@ -205,6 +263,7 @@ def write_health(
             "blind": blind,
             "identical_switches": detector.identical_switches if detector else 0,
             "running": running,
+            "state": state,
             "updated": datetime.now().isoformat(timespec="seconds"),
         }))
     except OSError:
@@ -355,6 +414,8 @@ def run(
     max_events: int | None = None,
     duration_seconds: float | None = None,
     stop_event: "object | None" = None,
+    pause_event: "object | None" = None,
+    stale_pause_seconds: float | None = None,
 ) -> int:
     """Poll the frontmost window; emit switch events on debounced context changes and
     heartbeat events every ``heartbeat_seconds`` of stable same-window work (0 disables).
@@ -369,9 +430,31 @@ def run(
     macOS Screen Recording grant, so recording from inside it means macOS doesn't see a second,
     separate capture client and stop re-prompting every launch. The loop waits on the event
     between polls so a stop request is honoured within one poll interval.
+
+    ``pause_event`` (another ``threading.Event``) suspends emission while set — nothing is
+    captured or written, but the loop (and the session) stays alive, so pause/resume doesn't
+    tear down and re-request anything. On resume the debounce state and heartbeat clock are
+    reset, so the first post-resume event is a fresh, debounced switch — never a phantom
+    heartbeat for time that was paused.
+
+    ``stale_pause_seconds`` (default ``config.STALE_PAUSE_SECONDS``, 0 disables) auto-pauses
+    when the screen hasn't visibly changed for that long — the user walked away with the
+    screen on, and continuing to heartbeat would credit an empty chair with presence. The
+    loop keeps cheaply probing (window switch, or a changed :func:`frame_signature` checked
+    at heartbeat cadence) and resumes itself within seconds of real activity. A manual
+    ``pause_event`` always outranks auto-resume. Disabled in ``dry_run`` (no screenshots to
+    compare).
     """
     def _stopping() -> bool:
         return stop_event is not None and stop_event.is_set()
+
+    def _wait() -> None:
+        # Interruptible wait: a threading.Event lets an in-process stop land within one
+        # poll; plain time.sleep otherwise (CLI / subprocess use, stopped via Ctrl-C).
+        if stop_event is not None:
+            stop_event.wait(poll_seconds)
+        else:
+            time.sleep(poll_seconds)
     config.ensure_dirs()
     pending = Path(pending) if pending is not None else config.pending_dir()
     pending.mkdir(parents=True, exist_ok=True)
@@ -400,6 +483,16 @@ def run(
             request_screen_permission()
         write_health(permission, detector, running=True)
 
+    # Pause machinery. Manual pause = the pause_event; auto-pause = the StaleTracker.
+    stale_seconds = (stale_pause_seconds if stale_pause_seconds is not None
+                     else float(config.STALE_PAUSE_SECONDS))
+    auto_pause_on = stale_seconds > 0 and not dry_run
+    tracker = StaleTracker(stale_seconds, start)
+    probe_interval = heartbeat_seconds if heartbeat_seconds > 0 else 12.0
+    auto_paused = False
+    was_paused = False
+    last_probe_at = start
+
     stop_note = "Ctrl-C to stop" if duration_seconds is None else (
         f"auto-stops in {duration_seconds/60:.0f} min (or Ctrl-C)")
     hb_note = f", heartbeat={heartbeat_seconds:.0f}s" if heartbeat_seconds > 0 else ""
@@ -414,8 +507,56 @@ def run(
                 print(f"\n[real_capture] reached {duration_seconds/60:.0f}-min limit. "
                       f"Wrote {written} event(s) to {pending}.")
                 break
+
+            # Manual pause: user asked to hold. Nothing is observed or written while set.
+            manual_paused = pause_event is not None and pause_event.is_set()
+            if manual_paused != was_paused:
+                was_paused = manual_paused
+                if manual_paused:
+                    print("[real_capture] paused by user.")
+                else:
+                    # Fresh eyes on resume: re-debounce whatever is frontmost (it emits as a
+                    # new switch) and reset the heartbeat + staleness clocks so paused time
+                    # can never be credited as presence.
+                    state = DebounceState()
+                    last_emit_at = time.monotonic()
+                    tracker.last_change_at = last_emit_at
+                    auto_paused = False
+                    print("[real_capture] resumed by user.")
+                if not dry_run:
+                    write_health(permission, detector, running=True,
+                                 state="paused" if manual_paused else "recording")
+            if manual_paused:
+                _wait()
+                continue
+
             key = backend.frontmost()
             now = time.monotonic()
+
+            # Auto-pause: screen frozen past the threshold -> empty chair, stop heartbeating.
+            if auto_pause_on and not auto_paused and tracker.stale(now):
+                auto_paused = True
+                print(f"[real_capture] screen unchanged for {stale_seconds/60:.0f} min — "
+                      "auto-paused (resumes on activity).")
+                write_health(permission, detector, running=True, state="auto_paused")
+            if auto_paused:
+                # Probe for life: a window switch resumes instantly; otherwise compare a
+                # cheap frame signature at heartbeat cadence.
+                revived = key != state.committed
+                if not revived and now - last_probe_at >= probe_interval:
+                    last_probe_at = now
+                    revived = tracker.observe_frame(frame_signature(backend.grab_primary()), now)
+                if revived:
+                    auto_paused = False
+                    state = DebounceState()
+                    last_emit_at = now
+                    tracker.last_change_at = now
+                    print("[real_capture] activity detected — capture resumed.")
+                    write_health(permission, detector, running=True)
+                else:
+                    _wait()
+                    continue
+
             state, emit = advance(state, key, now, debounce_seconds)
             kind = "switch"
             if not emit and heartbeat_due(state, last_emit_at, now, heartbeat_seconds):
@@ -427,11 +568,17 @@ def run(
                 if dry_run:
                     print(f"[{kind}] {when:%H:%M:%S}  {app_name} — {window_title!r}")
                 else:
+                    img = backend.grab_primary()
                     event = make_event(app_name, window_title, when, kind=kind)
-                    frame_hash = write_event(event, backend.grab_primary(), pending)
+                    frame_hash = write_event(event, img, pending)
                     written += 1
                     print(f"[event]  {event.event_id}  ({kind})  {app_name} — {window_title!r}")
                     detector.observe(kind, frame_hash)
+                    # Feed the staleness clock: a switch is activity by definition; a
+                    # heartbeat only counts if its content actually changed.
+                    if kind == "switch":
+                        tracker.observe_switch(now)
+                    tracker.observe_frame(frame_signature(img), now)
                     write_health(permission, detector, running=True)
                     if detector.blind and not was_blind:
                         print("[real_capture] WARNING: the last "
@@ -442,13 +589,7 @@ def run(
                     was_blind = detector.blind
                 if once or (max_events is not None and written >= max_events):
                     break
-            # Interruptible wait: a threading.Event lets an in-process stop land within one
-            # poll; plain time.sleep otherwise (CLI / subprocess use, stopped via Ctrl-C).
-            if stop_event is not None:
-                if stop_event.wait(poll_seconds):
-                    continue  # loop top notices _stopping() and exits cleanly
-            else:
-                time.sleep(poll_seconds)
+            _wait()
     except KeyboardInterrupt:
         print(f"\n[real_capture] stopped. Wrote {written} event(s) to {pending}.")
     finally:
