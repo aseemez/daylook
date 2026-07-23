@@ -1314,12 +1314,29 @@
   invite.addEventListener("keydown", (e) => { if (e.key === "Enter") saveInvite(); });
 
   // ---------- boot ----------
+  // Unprocessed activity from EARLIER days sits invisible in pending/ until something runs
+  // the pipeline (classic case: the app was quit or updated mid-week). Surface it once at
+  // boot so the user knows their journal is behind and how to catch up.
+  async function checkBacklog() {
+    try {
+      const b = await (await fetch("/journal/backlog")).json();
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const stale = (b.days || []).filter((d) => d.date < today);
+      if (!stale.length) return;
+      const names = stale.map((d) => new Date(d.date + "T12:00:00")
+        .toLocaleDateString(undefined, { month: "short", day: "numeric" })).join(", ");
+      addBot(`Heads up — you have unprocessed activity waiting from ${names}. ` +
+        `Ask me “what did I do today” and I’ll catch up; each day gets journaled under its own date.`);
+    } catch { /* offline or dev — the nudge is best-effort */ }
+  }
   async function boot() {
     loadDates();
     try {
       const res = await fetch("/setup");
       if (res.ok) { const s = await res.json(); if (!s.configured) { backdrop.classList.add("on"); invite.focus(); return; } }
     } catch { /* no /setup on dev — fine */ }
+    checkBacklog();
     box.focus();  // land ready to chat; naming is optional (sidebar pencil / welcome chip)
   }
   boot();

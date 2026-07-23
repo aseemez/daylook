@@ -114,6 +114,27 @@ def post_setup(req: SetupRequest) -> dict:
     return {"configured": settings.is_configured(data), "mode": data.get("api_key_mode")}
 
 
+@app.get("/journal/backlog")
+def journal_backlog() -> dict:
+    """Pending capture events grouped by calendar date — the 'you have unprocessed days'
+    signal. A backlog builds up whenever capture ran but processing didn't (the app was
+    quit, updated, or the user just never asked); it used to sit invisible until a chat
+    happened to trigger the pipeline. The UI calls this once at boot and nudges the user
+    when days other than today are waiting."""
+    try:
+        events = CaptureAgent().read_pending()
+    except Exception:
+        events = []
+    by_date: dict[str, int] = {}
+    for e in events:
+        d = e.dt.date().isoformat()
+        by_date[d] = by_date.get(d, 0) + 1
+    return {
+        "days": [{"date": d, "events": n} for d, n in sorted(by_date.items())],
+        "total": len(events),
+    }
+
+
 @app.get("/journal/dates")
 def journal_dates(memory: MemoryAgent = Depends(get_memory)) -> dict:
     """Every date with a journal or hand-added blocks, newest first — the sidebar's day list."""

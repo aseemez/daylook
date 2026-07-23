@@ -114,3 +114,19 @@ def test_chat_live_end_to_end(tmp_path, monkeypatch):
     assert body["reply"]
     assert body["session_id"]
     api._root = None
+
+
+def test_journal_backlog_groups_pending_by_date(tmp_path, monkeypatch):
+    """The boot-time 'you have unprocessed days' nudge needs pending counts per date."""
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    from datetime import datetime
+    from daylook.capture_script.mock_generator import generate
+
+    client = TestClient(app)
+    assert client.get("/journal/backlog").json() == {"days": [], "total": 0}
+
+    generate(start=datetime(2026, 7, 5, 9, 0, 0))
+    generate(start=datetime(2026, 7, 6, 9, 0, 0))
+    body = client.get("/journal/backlog").json()
+    assert [d["date"] for d in body["days"]] == ["2026-07-05", "2026-07-06"]
+    assert body["total"] == sum(d["events"] for d in body["days"]) > 0
