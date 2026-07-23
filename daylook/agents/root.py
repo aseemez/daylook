@@ -95,10 +95,29 @@ class RootAgent:
             }
 
         def show_today(tool_context: ToolContext) -> dict:
-            """Return the journal already generated this session, if any."""
+            """Return the journal already generated this session, if any.
+
+            Staleness guard: a session can outlive a whole workday (journal generated at
+            noon, question asked at midnight — it happened, with 10 hours of tracking
+            sitting unprocessed). If new events have been captured since, this tool says so
+            and refuses to present the old writeup as current, so the model is pushed to
+            process_today instead of serving a half-day journal as the full day."""
             writeup = tool_context.state.get("current_writeup")
             if not writeup:
                 return {"writeup": None, "note": "No journal yet this session — process the day first."}
+            from daylook.agents.capture import CaptureAgent
+            try:
+                pending = CaptureAgent(pending=pending_dir).pending_count()
+            except Exception:
+                pending = 0
+            if pending > 0:
+                return {
+                    "stale": True,
+                    "pending_events": pending,
+                    "note": (f"This journal is OUT OF DATE: {pending} captured events are "
+                             "not in it yet. Call process_today NOW and present its fresh "
+                             "writeup instead of this one."),
+                }
             return {"date": tool_context.state.get("current_date"), "writeup": writeup}
 
         async def remember_preference(preference: str, tool_context: ToolContext) -> dict:
@@ -152,12 +171,16 @@ class RootAgent:
             "their screen activity into a readable daily timeline and answer questions about "
             "their work.\n\n"
             "Routing:\n"
-            "- If the user wants to process/generate today's journal or asks what they did "
-            "today, call process_today, then present the returned 'writeup' to the user "
-            "VERBATIM (do not summarize or drop the timeline or numbers). If "
+            "- If the user asks about TODAY in any phrasing ('what did I do today', 'how was "
+            "my day', 'waddap with today'), ALWAYS call process_today — even if you already "
+            "produced a journal earlier in this conversation, because tracking keeps running "
+            "and hours of new activity may have been captured since. NEVER answer a "
+            "today-question from an earlier turn's writeup. Then present the returned "
+            "'writeup' VERBATIM (do not summarize or drop the timeline or numbers). If "
             "'also_processed_dates' is non-empty, briefly mention those earlier days were "
             "caught up and journaled too (they're in the sidebar).\n"
-            "- If they ask to see the journal again, call show_today.\n"
+            "- Call show_today only when they explicitly ask to re-display the journal you "
+            "just gave them; if it reports it is stale, call process_today instead.\n"
             "- If they ask about a PAST day or overall history, call ask_history and relay the "
             "answer.\n"
             "- If they state a preference or exclusion (e.g. 'don't count Slack as focus', "
