@@ -2,7 +2,42 @@
 
 > Living status doc for whoever (human or agent) picks this up next. CLAUDE.md is the
 > spec / source of truth; **this file is the current state of the world**. Read both.
-> Last updated: 2026-07-21 — production track: paid-user plan, free-tier dev key, relay API-key upstream.
+> Last updated: 2026-07-23 — capture-blindness incident: root-caused, 5 fixes shipped, Jul 21 journal rebuilt.
+
+### Incident + hardening — 2026-07-23 (this session)
+
+**What happened.** The Jul 22 16:38 rebuild+reinstall changed the app's ad-hoc code signature;
+macOS silently revoked Screen Recording, and capture recorded the **desktop wallpaper** for ~2
+days while reporting the user "away" (Jul 22: 20/282 distinct frames; Jul 23: 9/316). Meanwhile
+3 days of events piled up in `pending/`; when processing finally ran, the pipeline collapsed all
+601 events under the first event's date and **overwrote the real 2026-07-21 journal** with 7
+junk blocks. Jul 23's real work was never captured (wallpaper pixels) — unrecoverable.
+
+**Fixes shipped (one commit each, in order):**
+1. **Per-day pipeline** — pending events are grouped by calendar date; each date is batched/
+   analyzed/journaled/persisted independently (files move to `processed/` per-day, crash-safe).
+   Same-day reruns now MERGE with stored blocks (noon + night = full day) with
+   `source_event_ids`-overlap dedupe. Mock generator ids are now timestamp-derived.
+2. **Blind-capture detection** — Screen Recording preflight + `BlindnessDetector` (N identical
+   frames across window *switches* = frozen frame; heartbeats excluded). Verdict in
+   `capture_health.json`; `/capture/status` exposes `blind`; sidebar shows a "can't see your
+   screen" warning while a blind capture runs.
+3. **Chat turn bounded** — `asyncio.wait_for` around the ADK turn (`DAYLOOK_CHAT_TIMEOUT_SECONDS`,
+   default 480s) + UI AbortController backstop; stalled connections get a retry message instead
+   of an infinite spinner.
+4. **Stable code signing** — `build.sh` signs with a real cert (auto-detects the owner's free
+   "Apple Development" identity, `CODESIGN_IDENTITY` overrides; ad-hoc only as a loud fallback),
+   so TCC grants survive rebuilds. This build's TeamIdentifier: T5Y9V9A4K3.
+5. **Backlog surfacing** — `GET /journal/backlog` + boot-time chat nudge when pre-today days sit
+   unprocessed in `pending/`.
+
+**Data repair done:** junk blocks cleared; 2026-07-21 rebuilt from its 169 real events (cache
+hits made it ~free); DB backup at `~/.daylook/journal.sqlite.bak-20260723`. Jul 22/23 wallpaper
+events remain in `processed/` untouched (metadata is real, pixels are wallpaper — a rough
+app-level rebuild is possible but wasn't asked for). New app installed to `/Applications` and
+restarted. ⚠️ **The signature change (ad-hoc → cert) revokes Screen Recording ONE more time** —
+the owner must re-grant on next "Start tracking" (the new banner/prompt walks them through it);
+after that, rebuilds keep the grant.
 
 ## TL;DR
 

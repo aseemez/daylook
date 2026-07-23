@@ -79,6 +79,8 @@ SQLite schema — minimum shape, adjust as needed:
 
 `source_event_ids` stores the list of capture event ids that were merged into that block. The anti-hallucination check in `eval.py` uses this to verify every block traces back to real captured data.
 
+**Per-day processing invariant (2026-07-23).** The pipeline groups pending events by calendar date and processes each date independently — a multi-day backlog becomes one journal per day and can never collapse into (or overwrite) a single date. Re-processing a date **merges** with its stored derived blocks (dedupe on `source_event_ids` overlap); manual blocks are preserved by `save_day` as before. Capture also writes `capture_health.json` (Screen Recording preflight + frozen-frame detection) so a blind capture is warned about in the UI instead of silently journaling the wallpaper — see PROGRESS.md's 2026-07-23 incident section for why both exist.
+
 `manual=1` marks a block the user added or edited by hand in the calendar UI (its `source_event_ids` is `[]` — it traces to the user, not to capture). Manual blocks **survive re-processing** of the same day: `save_day` only clears `manual=0` rows. Editing goes through `MemoryAgent.add_block/update_block/delete_block` (the store's only write path stays Memory) and is exposed by `POST/PATCH/DELETE /journal/{date}/blocks[/{id}]` in the API. Column added via an in-place migration in `Store._migrate` so existing DBs upgrade without data loss. The anti-hallucination invariant still holds for *pipeline* output; manual blocks are a deliberate user-authored exception and are never part of eval fixtures.
 
 ## Data profiles (dev vs real — do not mix)
@@ -232,7 +234,11 @@ Target: **~10 paying users, macOS only** (Windows is a later port of the capture
 - **Dev/test** — free-tier AI Studio key (see Auth & cost). Never bill dev work to the production key.
 - **Trust upgrades when revenue exists** — Apple Developer ID ($99/yr, removes the Gatekeeper "Open Anyway" scare) → auto-update → Firestore-backed metering.
 
-## Current status (2026-07-21)
+## Current status (2026-07-23)
+
+**Capture-blindness incident root-caused and fixed** (see PROGRESS.md → "Incident + hardening — 2026-07-23"): ad-hoc re-signing had silently revoked Screen Recording (2 days of wallpaper capture), and a 3-day pending backlog collapsed onto 2026-07-21, overwriting its journal. Shipped: per-day pipeline processing with same-day merge, blind-capture detection (`capture_health.json` + UI warning), bounded chat turns (480s + UI abort), stable cert signing in `build.sh` (grants survive rebuilds), and boot-time backlog surfacing. Jul 21's journal rebuilt from real events; new signed build installed. **Owner must re-grant Screen Recording once** (signature changed ad-hoc → cert). Tests 101 passed / 6 skipped.
+
+## Previous status (2026-07-21)
 
 **Product complete and distribution built; production hardening in progress** (repo: https://github.com/aseemez/daylook). All 10 build steps done, real capture live-tested (CGWindowList z-order fix; split-screen limitation known). **Tests 78 passed / 6 skipped.** Eval logic unchanged but the Analyst prompt is now v2 (heartbeats), so **the first `eval.py` rerun needs a real `GOOGLE_API_KEY` in `.env`** to repopulate the cache — after that it's free again. Release track done: web chat UI, PyInstaller `.app`/`.dmg` (arm64, unsigned), landing page in `docs/`, and the **relay live on Cloud Run** (`https://contextline-relay-862472415362.us-central1.run.app`, verified answering 2026-07-21; deployed revision predates `/healthz` + the API-key upstream — needs a redeploy). 50 invite tokens in gitignored `relay/tokens.txt`.
 
