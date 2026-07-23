@@ -33,6 +33,13 @@ from daylook.pipeline import Pipeline
 APP_NAME = "daylook"
 USER_ID = "local-user"
 
+# Hard ceiling on one chat turn. Without it, a stalled connection (laptop offline, provider
+# outage) hangs the model call forever and the UI spins until the app is killed — the user's
+# only signal that anything is wrong. Generous because one turn can legitimately process a
+# multi-day backlog (several minutes of vision calls); override with the env var if needed.
+import os
+CHAT_TIMEOUT_SECONDS = int(os.environ.get("DAYLOOK_CHAT_TIMEOUT_SECONDS", "480"))
+
 
 class RootAgent:
     def __init__(
@@ -299,14 +306,28 @@ class RootAgent:
         from daylook.observability import observe
 
         content = types.Content(role="user", parts=[types.Part(text=message)])
-        reply = ""
-        with observe("root", "chat", message[:80], session_id=session_id) as rec:
+
+        async def _drive() -> str:
+            reply = ""
             async for ev in self._runner.run_async(
                 user_id=USER_ID, session_id=session_id, new_message=content
             ):
                 if ev.is_final_response() and ev.content and ev.content.parts:
                     reply = ev.content.parts[0].text or reply
-            rec["output"] = f"{len(reply)} chars"
+            return reply
+
+        with observe("root", "chat", message[:80], session_id=session_id) as rec:
+            try:
+                reply = await asyncio.wait_for(_drive(), timeout=CHAT_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                # Cancel the stalled turn and tell the user, instead of spinning forever.
+                reply = (
+                    "That took too long and I gave up waiting — the AI service may be "
+                    "unreachable right now. Check your internet connection and ask me again."
+                )
+                rec["output"] = f"TIMEOUT after {CHAT_TIMEOUT_SECONDS}s"
+            else:
+                rec["output"] = f"{len(reply)} chars"
         return reply, session_id
 
     async def get_refinements(self, session_id: str) -> list[str]:

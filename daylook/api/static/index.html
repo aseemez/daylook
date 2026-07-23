@@ -808,21 +808,31 @@
     addBot(`Lovely to meet you. I'm ${assistantName} from now on. Say "start tracking" and I'll begin keeping your day, then ask me about it whenever you like.`);
   }
 
+  // Slightly longer than the server's own per-turn ceiling (DAYLOOK_CHAT_TIMEOUT_SECONDS,
+  // 480s) so the server's friendlier timeout reply normally arrives first; this abort is the
+  // backstop for a connection that stalls without ever failing — previously that meant a
+  // spinner that never went away.
+  const CHAT_ABORT_MS = 540000;
   async function sendMessage(text) {
     if (!text || busy) return;
     showChat(); addUser(text);
     busy = true; send.disabled = true; thinking.classList.add("on"); scrollDown();
+    const ctrl = new AbortController();
+    const abortTimer = setTimeout(() => ctrl.abort(), CHAT_ABORT_MS);
     try {
       const res = await fetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }) });
+        body: JSON.stringify({ message: text, session_id: sessionId }), signal: ctrl.signal });
       if (!res.ok) throw new Error("the server returned " + res.status);
       const data = await res.json();
       sessionId = data.session_id;
       addBot(data.reply, false);
       loadDates();  // a freshly processed day should appear in the journal list
     } catch (err) {
-      addBot("Something went wrong: " + err.message + ". Is the app still running?", true);
+      addBot(err.name === "AbortError"
+        ? "That took too long, so I stopped waiting. Check your internet connection and send your message again."
+        : "Something went wrong: " + err.message + ". Is the app still running? Try sending that again.", true);
     } finally {
+      clearTimeout(abortTimer);
       busy = false; send.disabled = false; thinking.classList.remove("on"); box.focus();
     }
   }
