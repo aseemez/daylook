@@ -80,6 +80,21 @@ class RootAgent:
             result = await asyncio.to_thread(
                 pipeline.process_day, pending_dir=pending_dir, refinements=refinements
             )
+            if result["date"] is None:
+                # Nothing pending — but that usually means the day is already processed,
+                # not that nothing happened. Serve the STORED journal for today so 'how was
+                # my day' right after processing doesn't dead-end in 'no pending activity'.
+                today = date_cls.today().isoformat()
+                stored = memory.get_journal(today)
+                if stored:
+                    return {
+                        "date": today,
+                        "num_events": 0,
+                        "num_blocks": len(memory.get_blocks(today)),
+                        "writeup": stored["writeup"],
+                        "also_processed_dates": [],
+                        "note": "No new activity since last processing; this journal is current.",
+                    }
             tool_context.state["current_date"] = result["date"]
             tool_context.state["current_day"] = result["day"]
             tool_context.state["current_writeup"] = result["writeup"]
