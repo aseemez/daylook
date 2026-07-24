@@ -59,10 +59,11 @@ class MemoryAgent:
 
     def add_block(
         self, date: str, start: str, end: str, label: str,
-        app_name: str, category: str | None, duration_seconds: int,
+        app_name: str, category: str | None, duration_seconds: int, detail: str = "",
     ) -> dict:
         block_id = self.store.add_block(
-            date, start, end, label, app_name, category, duration_seconds, manual=True
+            date, start, end, label, app_name, category, duration_seconds,
+            manual=True, detail=detail,
         )
         return self.store.get_block(block_id)
 

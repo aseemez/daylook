@@ -13,6 +13,8 @@ Run locally:
 
 from __future__ import annotations
 
+import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -57,6 +59,101 @@ def get_memory() -> MemoryAgent:
     if _memory is None:
         _memory = MemoryAgent()
     return _memory
+
+
+# --- Hourly auto-journal -----------------------------------------------------------------
+#
+# The journal used to be built only when the user happened to ask about their day — capture
+# could run for 14 hours and the day stayed invisible until a chat prompt kicked the pipeline
+# (and one hung model call could stall even that). Instead, a background thread processes
+# whatever is pending on a fixed cadence, so the journal is always at most an hour behind and
+# a "what did I do today" answers instantly from (nearly) current data. The chat path still
+# triggers processing too; the pipeline's process-wide lock keeps the two from colliding.
+#
+# 0 disables (tests, dev shells that don't want surprise model calls). First catch-up pass
+# runs a minute after boot so a multi-day backlog starts clearing without any prompt.
+AUTO_JOURNAL_SECONDS = int(os.environ.get("DAYLOOK_AUTO_JOURNAL_SECONDS", "3600"))
+_auto_journal_stop = threading.Event()
+_auto_journal_thread: threading.Thread | None = None
+
+
+def _auto_journal_once() -> None:
+    """One catch-up pass: process pending events if there are any and a model is reachable.
+
+    Builds its own MemoryAgent/Pipeline (own SQLite connection) — this runs on a thread, and
+    sharing the request handlers' connection would race them. Never raises: a failed pass
+    (offline, model timeout) leaves events pending and simply tries again next tick.
+    """
+    from daylook.observability import observe
+    from daylook.pipeline import Pipeline
+
+    try:
+        if not config.model_configured():
+            return
+        if CaptureAgent().pending_count() == 0:
+            return
+        memory = MemoryAgent()
+        try:
+            with observe("pipeline", "auto_journal") as rec:
+                result = Pipeline(memory).process_day()
+                rec["output"] = f"journaled {result.get('date') or 'nothing'}"
+        finally:
+            memory.close()
+    except Exception as e:
+        with observe("pipeline", "auto_journal_error", str(e)[:120]):
+            pass
+    _prune_processed()
+
+
+def _prune_processed() -> None:
+    """Age out raw event files (screenshots!) from processed/ past the retention window.
+
+    Long-session hygiene: a >10h/day user writes ~250 MB of screenshots a day, and keeping
+    them forever is both a disk leak and a privacy liability. The journal itself (SQLite,
+    including source_event_ids) is never touched — only the raw JPEG/JSON pairs age out.
+    Best-effort by design: a locked file just waits for the next pass.
+    """
+    days = config.PROCESSED_RETENTION_DAYS
+    if days <= 0:
+        return
+    import time
+    cutoff = time.time() - days * 86400
+    try:
+        for f in config.processed_dir().iterdir():
+            try:
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    f.unlink()
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+def _auto_journal_loop() -> None:
+    if _auto_journal_stop.wait(60):  # boot catch-up after a minute, unless shutting down
+        return
+    _auto_journal_once()
+    while not _auto_journal_stop.wait(AUTO_JOURNAL_SECONDS):
+        _auto_journal_once()
+
+
+@app.on_event("startup")
+def _start_auto_journal() -> None:
+    global _auto_journal_thread
+    if AUTO_JOURNAL_SECONDS <= 0 or (
+        _auto_journal_thread is not None and _auto_journal_thread.is_alive()
+    ):
+        return
+    _auto_journal_stop.clear()
+    _auto_journal_thread = threading.Thread(
+        target=_auto_journal_loop, name="daylook-auto-journal", daemon=True
+    )
+    _auto_journal_thread.start()
+
+
+@app.on_event("shutdown")
+def _stop_auto_journal() -> None:
+    _auto_journal_stop.set()
 
 
 class ChatRequest(BaseModel):
@@ -166,6 +263,7 @@ class BlockIn(BaseModel):
     start: str            # "HH:MM"
     end: str              # "HH:MM"
     label: str
+    detail: str | None = None
     category: str | None = None
     app_name: str | None = None
 
@@ -174,6 +272,7 @@ class BlockPatch(BaseModel):
     start: str | None = None
     end: str | None = None
     label: str | None = None
+    detail: str | None = None
     category: str | None = None
     app_name: str | None = None
 
@@ -202,7 +301,7 @@ def add_block(date: str, req: BlockIn, memory: MemoryAgent = Depends(get_memory)
     block = memory.add_block(
         date=date, start=start, end=end, label=req.label.strip() or "Activity",
         app_name=(req.app_name or "").strip(), category=(req.category or "other"),
-        duration_seconds=dur,
+        duration_seconds=dur, detail=(req.detail or "").strip(),
     )
     return {"block": block}
 
@@ -218,6 +317,8 @@ def edit_block(
     fields: dict = {}
     if req.label is not None:
         fields["label"] = req.label.strip() or existing["label"]
+    if req.detail is not None:
+        fields["detail"] = req.detail.strip()
     if req.category is not None:
         fields["category"] = req.category
     if req.app_name is not None:

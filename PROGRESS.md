@@ -41,6 +41,59 @@ after that, rebuilds keep the grant.
 
 ## TL;DR
 
+### Accuracy + always-current journal — 2026-07-24 (this session)
+
+Root cause of the owner's 07-23 complaints ("Gumclaw deep dive I never did", "Matt Pocock wasn't
+92 min"): that day ran on the pre-stale-pause build, and **heartbeats kept firing against a
+locked/static screen** (processed events 22:12→23:08 show near-identical frames every ~100s).
+The 5.5-hour "why won't it journal" hang was an **unbounded analyst vision call** stalled by
+laptop sleep (log 07-23 08:55, latency 19.9M ms). Shipped this session:
+
+- **Instant screen-off pause** (`real_capture.screen_unavailable`): lock / display sleep pauses
+  capture the moment it happens (polled each tick; `state: "screen_off"` in capture_health,
+  its own pill text in the UI). Staleness (10 min) stays as the fallback for an *unlocked*
+  abandoned screen.
+- **Screen-change evidence + a deterministic away rule** (the app-wide "a 10-min video can't
+  take 92 min" common sense, per the owner: evidence in code, not prompt faith).
+  `analyst.annotate_screen_changes` diffs every event's on-disk screenshot against the
+  previous one (tolerance diff; all events have an image — keyframes only limit what's *sent*
+  to the model) and rides `screen=changed|static` into the prompt. Then
+  `analyst.enforce_static_breaks` **carves any ≥10-min run of unchanged frames into a
+  `break` block in code** ("Away — <app> left open"), whatever the model said — the same
+  10-min bar the live capture loop uses to auto-pause. Sub-10-min static stretches stay the
+  model's call (slow reading is legitimate). Anti-hallucination invariant survives the split.
+- **processed/ retention** (`PROCESSED_RETENTION_DAYS`, default 14, 0 = keep forever): a
+  >10h/day user writes ~250 MB of screenshots daily; the auto-journal pass ages out raw
+  JPEG/JSON pairs past the window. SQLite (incl. `source_event_ids`) is never touched.
+  Long sessions otherwise checked out: batching caps hold (≤400 events / ≤60 min / ≤12
+  images per vision call), the capture loop is O(1) memory, hourly processing drains
+  pending/.
+- **Hourly auto-journal** (`api/main.py`, `DAYLOOK_AUTO_JOURNAL_SECONDS`, default 3600, 0
+  disables): background thread processes pending events every hour + a boot catch-up pass, so
+  the journal is at most ~an hour behind without any prompt. Chat still triggers processing;
+  a **process-wide pipeline lock** (`pipeline._PROCESS_LOCK`) stops double-ingestion.
+- **Every model call is bounded** (`adk_utils.CALL_TIMEOUT_SECONDS`, default 240s, env
+  `DAYLOOK_CALL_TIMEOUT_SECONDS`): analyst/journalist/memory calls raise instead of hanging;
+  failed batches stay pending and retry next tick.
+- **Detail-rich blocks**: Analyst v6 emits `detail` (1–2 concrete sentences per block — real
+  titles/sites/files, no filler); new `blocks.detail` column (in-place migration); Journalist
+  v2 writes a story-of-the-day paragraph grounded in those details (dense, specific, no
+  productivity verdicts).
+- **Grid calendar UI**: the journal pane is now a time-grid day view (hour rails, blocks sized
+  by duration, detail text inside, click to expand/edit/reclassify). The focused/off-task
+  judgment bar is **gone** — replaced by a neutral "Xh tracked · category chips" strip
+  (judging stays available in chat via Memory's productivity_summary, only when asked).
+- **Tap-to-open fixed** (`launcher._run_gui`): the packaged app runs an NSApplication loop
+  that answers macOS "reopen" events by opening the browser — clicking Daylook while it's
+  already running now brings the UI up instead of doing nothing. A stray second launch
+  (`open -n`) also just opens the running instance's UI.
+
+Tests: 116 passed / 6 skipped, incl. new `test_screen_off.py`, `test_static_screen.py`,
+`test_detail.py`; UI script runtime-smoked with a stubbed DOM (per the standing rule).
+Cache/prompt versions bumped (analyst-v6, journalist-v2) — the **first pipeline run after this
+re-calls the model** (relay token in the packaged app; dev needs a real key).
+
+
 **All 10 build steps are complete, real screen capture is proven LIVE, distribution is built
 (relay deployed + `.app`/`.dmg` + landing page), and the project is now being hardened for
 ~10 paying macOS users.** Pipeline scores **5/5 on `eval.py`**; tests **65 passed, 6 skipped**

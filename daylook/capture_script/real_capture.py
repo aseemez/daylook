@@ -222,6 +222,31 @@ class StaleTracker:
         return self.threshold > 0 and (now - self.last_change_at) >= self.threshold
 
 
+def screen_unavailable() -> bool:
+    """True when there is no watchable screen at all: the session is locked or the display
+    is asleep (lid closed, display timeout, ctrl-cmd-Q).
+
+    This is the *instant* companion to the :class:`StaleTracker`: staleness needs 10 minutes
+    of frozen frames to conclude "empty chair", but a lock/sleep is an unambiguous OS signal
+    that the user is gone RIGHT NOW — waiting the 10 minutes would credit a locked screen
+    (which keeps returning identical frames, or the lock wallpaper) as presence. That is
+    exactly how an evening of screen-off breaks got journaled as one long focus session.
+    False on any error — capture must degrade to the staleness detector, never crash."""
+    try:
+        from Quartz import (  # type: ignore
+            CGSessionCopyCurrentDictionary, CGDisplayIsAsleep, CGMainDisplayID,
+        )
+        session = CGSessionCopyCurrentDictionary()
+        if session is None:
+            # No window-server session (fast user switching / logged out) — nothing to see.
+            return True
+        if session.get("CGSSessionScreenIsLocked", 0):
+            return True
+        return bool(CGDisplayIsAsleep(CGMainDisplayID()))
+    except Exception:
+        return False
+
+
 def preflight_screen_permission() -> bool | None:
     """Ask macOS whether this process may record the screen. None = can't tell (no Quartz,
     or an OS too old for the preflight API) — treated as 'assume ok', never as an error."""
@@ -251,9 +276,10 @@ def write_health(
     """Persist the current capture-vision verdict for the app/UI to read. Best-effort —
     health reporting must never be able to crash the capture loop itself.
 
-    ``state`` is the loop's mode: "recording", "paused" (user asked), or "auto_paused"
-    (stale screen — see :class:`StaleTracker`). It rides in the same file because the UI
-    needs mode and blindness together to label the recording pill truthfully."""
+    ``state`` is the loop's mode: "recording", "paused" (user asked), "auto_paused"
+    (stale screen — see :class:`StaleTracker`), or "screen_off" (locked / display asleep —
+    see :func:`screen_unavailable`). It rides in the same file because the UI needs mode
+    and blindness together to label the recording pill truthfully."""
     try:
         blind = bool(
             permission_granted is False or (detector is not None and detector.blind)
@@ -416,6 +442,7 @@ def run(
     stop_event: "object | None" = None,
     pause_event: "object | None" = None,
     stale_pause_seconds: float | None = None,
+    screen_off_fn: "object | None" = None,
 ) -> int:
     """Poll the frontmost window; emit switch events on debounced context changes and
     heartbeat events every ``heartbeat_seconds`` of stable same-window work (0 disables).
@@ -436,6 +463,11 @@ def run(
     tear down and re-request anything. On resume the debounce state and heartbeat clock are
     reset, so the first post-resume event is a fresh, debounced switch — never a phantom
     heartbeat for time that was paused.
+
+    ``screen_off_fn`` (default :func:`screen_unavailable`; tests inject a fake) is polled
+    every tick — a locked screen or sleeping display pauses capture *immediately*, no
+    10-minute staleness wait, and resumes the moment the screen is back. Checked at most
+    once a second and cheap (one window-server dictionary read).
 
     ``stale_pause_seconds`` (default ``config.STALE_PAUSE_SECONDS``, 0 disables) auto-pauses
     when the screen hasn't visibly changed for that long — the user walked away with the
@@ -493,6 +525,11 @@ def run(
     was_paused = False
     last_probe_at = start
 
+    # Screen-off watch: lock / display sleep pauses instantly (see screen_unavailable).
+    screen_off = (screen_off_fn if screen_off_fn is not None
+                  else (screen_unavailable if not dry_run else (lambda: False)))
+    was_screen_off = False
+
     stop_note = "Ctrl-C to stop" if duration_seconds is None else (
         f"auto-stops in {duration_seconds/60:.0f} min (or Ctrl-C)")
     hb_note = f", heartbeat={heartbeat_seconds:.0f}s" if heartbeat_seconds > 0 else ""
@@ -527,6 +564,30 @@ def run(
                     write_health(permission, detector, running=True,
                                  state="paused" if manual_paused else "recording")
             if manual_paused:
+                _wait()
+                continue
+
+            # Screen off / locked: pause NOW. Unlike staleness (which needs 10 frozen
+            # minutes to be sure), a lock or sleeping display is definitive — emitting
+            # heartbeats against it would journal an empty room as a work session.
+            now_off = bool(screen_off())
+            if now_off != was_screen_off:
+                was_screen_off = now_off
+                if now_off:
+                    print("[real_capture] screen locked/asleep — capture paused.")
+                    if not dry_run:
+                        write_health(permission, detector, running=True, state="screen_off")
+                else:
+                    # Same fresh-eyes reset as a manual resume: re-debounce whatever is
+                    # frontmost and restart the clocks so locked time is never credited.
+                    state = DebounceState()
+                    last_emit_at = time.monotonic()
+                    tracker.last_change_at = last_emit_at
+                    auto_paused = False
+                    print("[real_capture] screen is back — capture resumed.")
+                    if not dry_run:
+                        write_health(permission, detector, running=True)
+            if now_off:
                 _wait()
                 continue
 

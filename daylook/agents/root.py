@@ -344,10 +344,13 @@ class RootAgent:
             # file from a long-finished run shouldn't nag after the app was fixed/re-granted
             "blind": bool(running and health and health.get("blind")),
             "paused": paused,
-            # auto-pause is decided inside the capture loop (stale screen); it reports via
-            # the health file. Manual pause outranks it in what the UI should say.
+            # auto-pause is decided inside the capture loop (stale screen / locked screen);
+            # it reports via the health file. Manual pause outranks it in what the UI says.
             "auto_paused": bool(
                 running and not paused and health and health.get("state") == "auto_paused"
+            ),
+            "screen_off": bool(
+                running and not paused and health and health.get("state") == "screen_off"
             ),
         }
 

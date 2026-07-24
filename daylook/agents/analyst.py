@@ -34,7 +34,7 @@ from daylook.events import CaptureEvent, EventBatch
 from daylook.imaging import prepare_image
 
 # Bump when the prompt/schema changes so stale cache entries are naturally bypassed.
-PROMPT_VERSION = "analyst-v5"  # v5: content-aware productivity (social/entertainment) (v4 titles)
+PROMPT_VERSION = "analyst-v6"  # v6: per-block `detail` sentences (v5 content-aware categories)
 
 CATEGORIES = [
     "coding", "research", "communication", "review", "meeting", "writing",
@@ -47,6 +47,10 @@ CATEGORIES = [
 class _Group(BaseModel):
     label: str
     category: str
+    # 1–2 sentences of concrete specifics for the block (what exactly, from the screenshots).
+    # Optional so an old cached grouping (pre-v6 shape) still validates; empty means "no
+    # extra detail beyond the label".
+    detail: str = ""
     event_ids: list[str]
 
 
@@ -65,6 +69,9 @@ class LabeledBlock:
     category: str
     app_name: str
     source_event_ids: list[str]
+    # 1–2 concrete sentences of what actually happened (may be ""). Last + defaulted so
+    # pre-detail call sites and fixtures construct unchanged.
+    detail: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -164,8 +171,9 @@ def derive_blocks(
         if cur_key is not None and cur_key >= 0 and cur_key < len(grouping.blocks):
             label = grouping.blocks[cur_key].label
             category = grouping.blocks[cur_key].category
+            detail = (grouping.blocks[cur_key].detail or "").strip()
         else:
-            label, category = "Unlabeled activity", "other"
+            label, category, detail = "Unlabeled activity", "other", ""
         if category not in CATEGORIES:
             category = "other"
         app_name = Counter(e.app_name for e in cur).most_common(1)[0][0]
@@ -175,6 +183,7 @@ def derive_blocks(
             duration_seconds=total,
             label=label,
             category=category,
+            detail=detail,
             app_name=app_name,
             source_event_ids=[e.event_id for e in cur],
         ))
@@ -220,12 +229,45 @@ def select_keyframes(batch: EventBatch, max_images: int | None = None) -> set[st
     return keyframes
 
 
+# --- Screen-change evidence (deterministic common sense) ------------------------------
+
+def annotate_screen_changes(batch: EventBatch, pending_dir: Path) -> dict[str, bool]:
+    """event_id -> whether its screenshot visibly differs from the previous event's.
+
+    The plausibility signal the model can't fake and can't miss: real watching/reading/
+    working always moves pixels over minutes (video frames advance, pages scroll, text
+    appears), so a long run of unchanged frames is proof of an empty chair — a 10-minute
+    video "watched" for 92 minutes was really a paused player nobody was in front of.
+    Every capture event has its screenshot on disk (keyframe selection only limits what's
+    *sent* to the model), so this is computed locally for all of them and ridden into the
+    prompt as text. Uses the capture layer's tolerance diff (menu-bar crop, caret-proof).
+    Missing/unreadable images count as 'changed' — uncertainty must never fabricate idleness.
+    """
+    from PIL import Image
+
+    from daylook.capture_script.real_capture import frame_signature, frames_differ
+
+    changed: dict[str, bool] = {}
+    prev: bytes | None = None
+    for e in batch.events:
+        path = e.image_path(pending_dir)
+        try:
+            with Image.open(path) as im:
+                sig = frame_signature(im.convert("RGB"))
+        except Exception:
+            changed[e.event_id] = True
+            continue
+        changed[e.event_id] = frames_differ(prev, sig)
+        prev = sig
+    return changed
+
+
 # --- LLM grouping (vision, cached) ----------------------------------------------------
 
-def _cache_key(batch: EventBatch, images: dict[str, bytes]) -> str:
+def _cache_key(batch: EventBatch, images: dict[str, bytes], changes: dict[str, bool]) -> str:
     meta = [
         {"id": e.event_id, "t": e.timestamp, "app": e.app_name, "win": e.window_title,
-         "kind": e.kind}
+         "kind": e.kind, "chg": changes.get(e.event_id, True)}
         for e in batch.events
     ]
     return cache.make_key(
@@ -255,10 +297,27 @@ _INSTRUCTION = (
     "app you're labelling for.\n"
     "- Use the screenshots to make the label specific about what was actually happening, not "
     "just the app name.\n"
+    "- For each block also write 'detail': 1–2 sentences of CONCRETE specifics pulled from "
+    "the screenshots and window titles — the exact video/article/doc titles, channel or site "
+    "names, repo/file names, people, error messages, search queries, what changed between the "
+    "start and end of the block. Write it like a note to the person about what they actually "
+    "did, e.g. 'Watched \"AI coding workflows\" by Matt Pocock, mostly the section on cursor "
+    "rules; left it paused around the 40-min mark.' NEVER vague filler ('browsed the web', "
+    "'worked in the app', 'spent time on various tasks') and never padding — if the "
+    "screenshots show nothing beyond the label, keep detail short or empty rather than "
+    "inventing. Facts only, no commentary on productivity.\n"
     "- Events marked kind=heartbeat mean the person stayed in the SAME window (captured "
     "periodically during stable work). Runs of heartbeats almost always continue the current "
     "activity; only screenshots are proof of a content change within them. Most heartbeats "
     "have no screenshot attached — that's normal, group them by their app/window metadata.\n"
+    "- SANITY-CHECK long stretches against the evidence of change. Every event is annotated "
+    "screen=changed or screen=static (whether its screenshot visibly differs from the "
+    "previous one). Genuinely watching, reading, or working ALWAYS changes the screen over "
+    "minutes — video frames advance, pages scroll, text gets typed. A long run of "
+    "screen=static events means the person was NOT there: a paused video or an abandoned "
+    "page was simply left open. Label such stretches category 'break' with an honest label "
+    "(e.g. 'Away — YouTube video left paused'), no matter what app was on screen, and never "
+    "credit an unchanged screen as continuous activity.\n"
     "- Judge productivity by CONTENT, not by the app. The SAME app can be productive or not: "
     "reading docs / a tutorial / researching a problem on YouTube or the web is 'research'; "
     "aimless feed-scrolling, entertainment videos, or blind-dating clips on the same YouTube is "
@@ -272,17 +331,20 @@ _INSTRUCTION = (
 )
 
 
-def _build_content(batch: EventBatch, images: dict[str, bytes]):
+def _build_content(batch: EventBatch, images: dict[str, bytes],
+                   changes: dict[str, bool] | None = None):
     from google.genai import types
 
+    changes = changes or {}
     parts = [types.Part(text=_INSTRUCTION)]
     valid = ", ".join(e.event_id for e in batch.events)
     parts.append(types.Part(text=f"\nBatch {batch.batch_id} — valid event_ids: {valid}\n"))
     for e in batch.events:
         img = images.get(e.event_id)
+        screen = "changed" if changes.get(e.event_id, True) else "static"
         parts.append(types.Part(text=(
             f"\nEvent {e.event_id} | {e.dt.strftime('%H:%M:%S')} | kind={e.kind} | "
-            f"app={e.app_name} | window='{e.window_title}'"
+            f"app={e.app_name} | window='{e.window_title}' | screen={screen}"
             + (" | screenshot:" if img is not None else "")
         )))
         if img is not None:
@@ -300,7 +362,8 @@ def _make_agent():
     )
 
 
-async def _run_llm_async(batch: EventBatch, images: dict[str, bytes]) -> _Grouping:
+async def _run_llm_async(batch: EventBatch, images: dict[str, bytes],
+                         changes: dict[str, bool] | None = None) -> _Grouping:
     from google.adk.runners import InMemoryRunner
 
     agent = _make_agent()
@@ -308,7 +371,7 @@ async def _run_llm_async(batch: EventBatch, images: dict[str, bytes]) -> _Groupi
     session = await runner.session_service.create_session(
         app_name="daylook-analyst", user_id="analyst"
     )
-    content = _build_content(batch, images)
+    content = _build_content(batch, images, changes)
     text = None
     async for ev in runner.run_async(
         user_id="analyst", session_id=session.id, new_message=content
@@ -324,8 +387,13 @@ def llm_grouping(
     batch: EventBatch,
     pending_dir: Path | None = None,
     use_cache: bool = True,
+    changes: dict[str, bool] | None = None,
 ) -> _Grouping:
-    """The (cached) vision call that groups a batch. Prepares/downscales keyframe images only."""
+    """The (cached) vision call that groups a batch. Prepares/downscales keyframe images only.
+
+    ``changes`` is the screen-change annotation map; pass it when already computed (the
+    pipeline does — each event's image is opened once per run, which matters for a 10-hour
+    heartbeat-dense day), or leave None to compute here."""
     src = Path(pending_dir) if pending_dir is not None else config.pending_dir()
     keyframes = select_keyframes(batch)
     images = {
@@ -333,16 +401,126 @@ def llm_grouping(
         for e in batch.events
         if e.event_id in keyframes and e.image_path(src).exists()
     }
+    if changes is None:
+        changes = annotate_screen_changes(batch, src)
 
-    key = _cache_key(batch, images)
+    key = _cache_key(batch, images, changes)
     if use_cache:
         hit = cache.get(key)
         if hit is not None:
             return _Grouping(**hit)
 
-    grouping = asyncio.run(_run_llm_async(batch, images))
+    # Bounded like every other model call (see adk_utils.CALL_TIMEOUT_SECONDS): a vision
+    # call that stalls raises here — leaving the batch's events pending for a later retry —
+    # instead of wedging the pipeline for hours.
+    from daylook.adk_utils import CALL_TIMEOUT_SECONDS
+    try:
+        grouping = asyncio.run(
+            asyncio.wait_for(_run_llm_async(batch, images, changes),
+                             timeout=CALL_TIMEOUT_SECONDS)
+        )
+    except asyncio.TimeoutError:
+        raise TimeoutError(
+            f"analyst vision call for batch {batch.batch_id} did not answer "
+            f"within {CALL_TIMEOUT_SECONDS}s"
+        ) from None
     cache.set(key, grouping.model_dump())
     return grouping
+
+
+# --- Deterministic away-time enforcement ----------------------------------------------
+
+def enforce_static_breaks(
+    analysis: BatchAnalysis,
+    events: list[CaptureEvent],
+    changes: dict[str, bool],
+    all_events: list[CaptureEvent] | None = None,
+    threshold_seconds: float | None = None,
+) -> BatchAnalysis:
+    """Carve provably-idle stretches out of active blocks — in code, not by prompt.
+
+    The screen-change annotations are *evidence*; this is the *rule*: a run of consecutive
+    events whose frames never visibly changed, lasting at least ``STALE_PAUSE_SECONDS``
+    (the same 10-minute bar the live capture loop uses before auto-pausing), cannot be
+    active work — nobody watches a video or reads a page for 10+ minutes without a single
+    pixel moving. Such runs become ``break`` blocks ("Away — <app> left open") regardless
+    of how the model grouped or labeled them, so a paused video can never again be credited
+    as a 92-minute session. Shorter static stretches are left to the model's judgment (a
+    slow reader on one page is legitimate; that ambiguity is why the bar matches capture's).
+    """
+    thr = (threshold_seconds if threshold_seconds is not None
+           else float(config.STALE_PAUSE_SECONDS))
+    if thr <= 0 or not analysis.blocks:
+        return analysis
+    dwell = compute_dwell(all_events if all_events is not None else list(events))
+    by_id = {e.event_id: e for e in events}
+
+    out: list[LabeledBlock] = []
+    for blk in analysis.blocks:
+        evs = [by_id[eid] for eid in blk.source_event_ids if eid in by_id]
+        if not evs:
+            out.append(blk)
+            continue
+        # Split the block's events into alternating active / long-static segments.
+        segments: list[tuple[bool, list[CaptureEvent]]] = []  # (is_away, events)
+        run: list[CaptureEvent] = []
+
+        def close_run() -> None:
+            if not run:
+                return
+            away = (all(not changes.get(e.event_id, True) for e in run)
+                    and sum(dwell.get(e.event_id, 0) for e in run) >= thr)
+            if segments and segments[-1][0] == away:
+                segments[-1][1].extend(run)
+            else:
+                segments.append((away, list(run)))
+
+        for e in evs:
+            static = not changes.get(e.event_id, True)
+            if run and static != (not changes.get(run[-1].event_id, True)):
+                close_run()
+                run = []
+            run.append(e)
+        close_run()
+        # Merge any static run that was too short to count back into its neighbours.
+        merged: list[tuple[bool, list[CaptureEvent]]] = []
+        for away, seg in segments:
+            if merged and merged[-1][0] == away:
+                merged[-1][1].extend(seg)
+            else:
+                merged.append((away, list(seg)))
+
+        if not any(away for away, _ in merged):
+            out.append(blk)
+            continue
+        for away, seg in merged:
+            start_dt = seg[0].dt
+            total = sum(dwell.get(e.event_id, 0) for e in seg)
+            end_dt = start_dt + timedelta(seconds=total)
+            app = Counter(e.app_name for e in seg).most_common(1)[0][0]
+            if away:
+                out.append(LabeledBlock(
+                    start=start_dt.isoformat(timespec="seconds"),
+                    end=end_dt.isoformat(timespec="seconds"),
+                    duration_seconds=total,
+                    label=f"Away — {app} left open",
+                    category="break",
+                    app_name=app,
+                    source_event_ids=[e.event_id for e in seg],
+                    detail="Screen didn't change the whole time — likely away from the computer.",
+                ))
+            else:
+                out.append(LabeledBlock(
+                    start=start_dt.isoformat(timespec="seconds"),
+                    end=end_dt.isoformat(timespec="seconds"),
+                    duration_seconds=total,
+                    label=blk.label,
+                    category=blk.category,
+                    app_name=app,
+                    source_event_ids=[e.event_id for e in seg],
+                    detail=blk.detail,
+                ))
+    return BatchAnalysis(batch_id=analysis.batch_id, date=analysis.date, blocks=out)
 
 
 # --- Public entry points --------------------------------------------------------------
@@ -353,9 +531,15 @@ def analyze_batch(
     all_events: list[CaptureEvent] | None = None,
     use_cache: bool = True,
 ) -> BatchAnalysis:
-    """Analyze one batch end-to-end: LLM grouping (cached) -> deterministic derivation."""
-    grouping = llm_grouping(batch, pending_dir=pending_dir, use_cache=use_cache)
-    return derive_blocks(batch, grouping, all_events=all_events)
+    """Analyze one batch end-to-end: LLM grouping (cached) -> deterministic derivation,
+    then the deterministic away-time rule (see :func:`enforce_static_breaks`)."""
+    src = Path(pending_dir) if pending_dir is not None else config.pending_dir()
+    changes = annotate_screen_changes(batch, src)
+    grouping = llm_grouping(batch, pending_dir=pending_dir, use_cache=use_cache,
+                            changes=changes)
+    analysis = derive_blocks(batch, grouping, all_events=all_events)
+    return enforce_static_breaks(analysis, list(batch.events), changes,
+                                 all_events=all_events)
 
 
 def analyze_batches(
@@ -379,12 +563,18 @@ def _merge_two(a: dict, b: dict) -> dict:
     Times and source ids are recomputed from the real data, so the anti-hallucination invariant
     (source_event_ids ⊆ captured events) survives the merge."""
     lead = a if a["duration_seconds"] >= b["duration_seconds"] else b
+    # Details are the journal's substance — merging must not throw the absorbed block's away.
+    # Concatenate in chronological order, dedupe, and cap so a many-way merge stays a note,
+    # not an essay.
+    details = [d for d in dict.fromkeys(
+        [(a.get("detail") or "").strip(), (b.get("detail") or "").strip()]) if d]
     return {
         "start": a["start"],
         "end": b["end"],
         "duration_seconds": a["duration_seconds"] + b["duration_seconds"],
         "label": lead["label"],
         "category": lead["category"],
+        "detail": " ".join(details)[:600],
         "app_name": lead["app_name"],
         "source_event_ids": list(a["source_event_ids"]) + list(b["source_event_ids"]),
     }
@@ -450,7 +640,7 @@ def merge_blocks(blocks: list[dict], min_seconds: int | None = None) -> list[dic
 # The keys a day-summary block carries. Blocks read back from the store also carry db-only
 # columns (id, date, manual); summarize_day strips to this shape so stored and fresh blocks
 # can be combined without leaking storage details into the pipeline.
-_BLOCK_KEYS = ("start", "end", "duration_seconds", "label", "category", "app_name",
+_BLOCK_KEYS = ("start", "end", "duration_seconds", "label", "category", "detail", "app_name",
                "source_event_ids")
 
 
@@ -461,7 +651,9 @@ def summarize_day(date: str | None, blocks: list[dict]) -> dict:
     the surviving blocks, so callers can hand in any mix of freshly-derived and
     previously-stored blocks (e.g. when a second pipeline run the same day merges with the
     morning's result) and the totals always match what's shown."""
-    clean = [{k: b[k] for k in _BLOCK_KEYS} for b in sorted(blocks, key=lambda b: b["start"])]
+    # .get for `detail`: older stored rows and hand-written fixtures predate the column.
+    clean = [{k: (b[k] if k != "detail" else (b.get("detail") or "")) for k in _BLOCK_KEYS}
+             for b in sorted(blocks, key=lambda b: b["start"])]
     merged = merge_blocks(clean)
     by_cat: Counter[str] = Counter()
     by_app: Counter[str] = Counter()

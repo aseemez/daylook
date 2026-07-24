@@ -112,6 +112,12 @@ MAX_EVENT_DWELL_SECONDS = 15 * 60
 # ceiling was judged worth it.
 STALE_PAUSE_SECONDS = 10 * 60
 
+# Ingested events (screenshot + sidecar) are kept in processed/ for traceability, then
+# pruned. A full tracked day is ~3,600 files / ~250 MB — without retention a >10h/day user
+# hits tens of GB in months. 14 days keeps enough to re-derive/debug any recent journal
+# (source_event_ids stay in SQLite forever; only the raw files age out). 0 = keep forever.
+PROCESSED_RETENTION_DAYS = int(os.environ.get("DAYLOOK_PROCESSED_RETENTION_DAYS", "14"))
+
 # A readable journal groups the day into a handful of meaningful blocks, not a minute-by-minute
 # log. Blocks shorter than this get folded into an adjacent block (a 40-second glance at Safari
 # in the middle of a Terminal session shouldn't be its own timeline row). See

@@ -13,6 +13,7 @@ filed as one day and silently overwrite that day's real journal.
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable
@@ -22,6 +23,13 @@ from daylook.agents.capture import CaptureAgent, batch_events
 from daylook.agents.journalist import write_journal
 from daylook.agents.memory import MemoryAgent
 from daylook.observability import observe
+
+# One run at a time, process-wide. Two things can now trigger processing concurrently — a
+# user's "what did I do today" and the hourly auto-journal thread — and both read-then-move
+# the same pending/ files. Module-level (not per-Pipeline) because each caller builds its own
+# Pipeline instance; without a shared lock the same events could be double-ingested or a
+# half-moved batch re-read mid-move.
+_PROCESS_LOCK = threading.Lock()
 
 
 class Pipeline:
@@ -57,6 +65,19 @@ class Pipeline:
         ``move_processed`` moves ingested events to ``processed/`` after a successful persist;
         set False to keep a fixture reusable across runs (e.g. in eval).
         """
+        with _PROCESS_LOCK:
+            return self._process_day_locked(
+                pending_dir=pending_dir, refinements=refinements,
+                use_cache=use_cache, move_processed=move_processed,
+            )
+
+    def _process_day_locked(
+        self,
+        pending_dir: Path | None = None,
+        refinements: list[str] | None = None,
+        use_cache: bool = True,
+        move_processed: bool = True,
+    ) -> dict:
         capture = CaptureAgent(pending=pending_dir)
         with observe("capture", "batch_pending") as rec:
             events = capture.read_pending()

@@ -80,6 +80,36 @@ def _run_server(port: int, *, blocking: bool):
     return server, thread
 
 
+def _run_gui(port: int) -> int:
+    """Frozen-app mode: serve on a background thread, run an AppKit event loop on main.
+
+    Why: macOS never launches a second instance of a running .app — clicking the icon again
+    just sends the existing process a "reopen" AppleEvent. A plain server process ignores
+    that event, so tapping Daylook while it was already running did *nothing* (no window, no
+    browser, no feedback). The NSApplication loop exists purely to catch reopen (and Dock
+    clicks) and answer by opening the browser at the running UI. Quitting from the Dock
+    terminates the process; the server thread is a daemon and dies with it.
+    """
+    import webbrowser as wb
+
+    from AppKit import NSApplication  # type: ignore
+    from Foundation import NSObject  # type: ignore
+
+    _run_server(port, blocking=False)
+    url = f"http://{HOST}:{port}/"
+
+    class _ReopenDelegate(NSObject):  # noqa: N801 - ObjC naming
+        def applicationShouldHandleReopen_hasVisibleWindows_(self, sender, flag):  # noqa: N802
+            wb.open(url)
+            return False
+
+    app = NSApplication.sharedApplication()
+    delegate = _ReopenDelegate.alloc().init()
+    app.setDelegate_(delegate)  # NB: delegate must stay referenced or ObjC drops it
+    app.run()
+    return 0
+
+
 def _smoke(port: int) -> int:
     """Boot the server, confirm /health, tear down. Returns a process exit code."""
     server, thread = _run_server(port, blocking=False)
@@ -109,6 +139,13 @@ def main(argv: list[str] | None = None) -> int:
     # Translate saved settings into env before the agent layer is imported by the server.
     settings.apply_to_env()
 
+    # Already running (a stray second launch, e.g. `open -n` or the raw binary)? Don't stand
+    # up a duplicate on a random port — just bring up the existing UI and get out of the way.
+    if not args.smoke and _health_ok(args.port):
+        if not args.no_browser:
+            webbrowser.open(f"http://{HOST}:{args.port}/")
+        return 0
+
     port = _pick_port(args.port)
 
     if args.smoke:
@@ -116,6 +153,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.no_browser:
         threading.Thread(target=_open_when_ready, args=(port,), daemon=True).start()
+
+    # Packaged app: run the AppKit loop so re-clicking the icon reopens the browser.
+    # Dev (`python -m daylook.launcher`) keeps the plain blocking server — Ctrl-C works there,
+    # and NSApplication.run in a terminal doesn't.
+    if getattr(sys, "frozen", False):
+        try:
+            return _run_gui(port)
+        except Exception:
+            pass  # AppKit unavailable/broken — a working server still beats no app at all
+
     print(f"Daylook running at http://{HOST}:{port}/  (Ctrl-C to stop)")
     _run_server(port, blocking=True)
     return 0

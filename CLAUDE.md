@@ -26,6 +26,7 @@ A background script. No reasoning lives here.
 - While the committed window stays stable, emits a `heartbeat` event every `HEARTBEAT_SECONDS` (~12s) — same on-disk shape, `kind: "heartbeat"`. Heartbeats start only after the debounce confirms the user is stably on something.
 - Debounces rapid flicker (ignore switches under ~3s apart); no heartbeats while a switch candidate is pending.
 - Pausable (2026-07-23): a manual pause (UI button / chat / `POST /capture/pause`) suspends all capture without ending the session, and the loop **auto-pauses after `STALE_PAUSE_SECONDS` (10 min) of no visible screen change** — an unattended screen must not be credited as presence. Auto-resume on the first window switch or visible change; manual pause is never auto-resumed. Staleness uses a tolerance diff of a menu-bar-cropped thumbnail (clock repaints and caret blinks must not count as activity); blindness detection (frozen identical frames across switches) stays separate and byte-exact.
+- **Screen off ⇒ instant pause (2026-07-24).** Lock screen / display sleep is polled every tick (`screen_unavailable`: `CGSSessionScreenIsLocked` + `CGDisplayIsAsleep`) and pauses capture *immediately* — the 10-min staleness wait is only for an unlocked-but-abandoned screen. Resumes the moment the screen is back; health `state: "screen_off"`. This closed the 07-23 bug where an evening of screen-off breaks was journaled as one long video session.
 - That's it. This layer is an event source; agents do the rest.
 
 For the initial build, a **mock capture generator** replaces this — it emits realistic fake events into the same folder shape, so the agent pipeline can be built and tested without waiting on real capture.
@@ -76,7 +77,9 @@ pending/  → Capture Agent (read + batch + move to processed/)
 SQLite schema — minimum shape, adjust as needed:
 
 - `days(date PRIMARY KEY, writeup TEXT, created_at TIMESTAMP)`
-- `blocks(id INTEGER PRIMARY KEY, date TEXT, start TIMESTAMP, end TIMESTAMP, label TEXT, app_name TEXT, category TEXT, duration_seconds INT, source_event_ids JSON, manual INT DEFAULT 0)`
+- `blocks(id INTEGER PRIMARY KEY, date TEXT, start TIMESTAMP, end TIMESTAMP, label TEXT, detail TEXT DEFAULT '', app_name TEXT, category TEXT, duration_seconds INT, source_event_ids JSON, manual INT DEFAULT 0)`
+
+`detail` (2026-07-24, in-place migration): 1–2 concrete sentences per block written by the Analyst from the screenshots (real titles/sites/files/people — never "browsed the web"). It's the journal's substance: the grid UI shows it inside each block and the Journalist's story-paragraph is grounded in it. Detailed ≠ verbose: labels stay 4–10 words, details stay ≤2 sentences, the narrative stays one dense paragraph.
 
 `source_event_ids` stores the list of capture event ids that were merged into that block. The anti-hallucination check in `eval.py` uses this to verify every block traces back to real captured data.
 
@@ -235,7 +238,21 @@ Target: **~10 paying users, macOS only** (Windows is a later port of the capture
 - **Dev/test** — free-tier AI Studio key (see Auth & cost). Never bill dev work to the production key.
 - **Trust upgrades when revenue exists** — Apple Developer ID ($99/yr, removes the Gatekeeper "Open Anyway" scare) → auto-update → Firestore-backed metering.
 
-## Current status (2026-07-23)
+## Current status (2026-07-24)
+
+**Accuracy + always-current journal session** (details in PROGRESS.md → 2026-07-24): instant
+screen-off/lock pause in capture; deterministic away-time rule at analysis (`screen=changed|static`
+annotations from on-disk screenshot diffs + `enforce_static_breaks` carving ≥10-min static runs
+into `break` blocks in code); hourly auto-journal thread in the API (`DAYLOOK_AUTO_JOURNAL_SECONDS`,
+process-wide pipeline lock) so the journal stays ≤1h behind without prompting; every model call
+bounded (`DAYLOOK_CALL_TIMEOUT_SECONDS`, default 240s — a hung analyst call once wedged 5.5h);
+`blocks.detail` column + Analyst v6 details + Journalist v2 story paragraph (specific, dense, no
+productivity verdicts); journal pane rebuilt as a time-grid calendar (no focused/off-task bar — the
+UI reports, judgment only in chat when asked); packaged app answers macOS reopen events (tap-to-open
+fixed); `processed/` retention (`DAYLOOK_PROCESSED_RETENTION_DAYS`, 14d). Tests 118 passed / 6
+skipped. Prompt versions bumped → first pipeline run re-calls the model.
+
+## Previous status (2026-07-23)
 
 **Capture-blindness incident root-caused and fixed** (see PROGRESS.md → "Incident + hardening — 2026-07-23"): ad-hoc re-signing had silently revoked Screen Recording (2 days of wallpaper capture), and a 3-day pending backlog collapsed onto 2026-07-21, overwriting its journal. Shipped: per-day pipeline processing with same-day merge, blind-capture detection (`capture_health.json` + UI warning), bounded chat turns (480s + UI abort), stable cert signing in `build.sh` (grants survive rebuilds), and boot-time backlog surfacing. Jul 21's journal rebuilt from real events; new signed build installed. **Owner must re-grant Screen Recording once** (signature changed ad-hoc → cert). Tests 101 passed / 6 skipped.
 

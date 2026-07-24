@@ -1,0 +1,98 @@
+"""The `detail` field: Analyst grouping -> derived blocks -> merge -> SQLite round-trip.
+
+Details are the journal's substance (the fix for "the log was generic — 'used X'"): the
+Analyst writes 1-2 concrete sentences per block, and every later stage must carry them
+without loss — including block merging and the storage migration on a pre-detail database.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+from daylook.agents.analyst import _Group, _Grouping, _merge_two, derive_blocks, summarize_day
+from daylook.events import CaptureEvent, EventBatch
+from daylook.storage.sqlite import Store
+
+
+def _batch(specs: list[tuple[str, int]]) -> EventBatch:
+    base = datetime(2026, 7, 5, 9, 0, 0)
+    events = [
+        CaptureEvent(
+            event_id=f"evt_{i:04d}",
+            timestamp=(base + timedelta(minutes=off)).isoformat(timespec="seconds"),
+            app_name=app,
+            window_title=f"{app} window",
+        )
+        for i, (app, off) in enumerate(specs, start=1)
+    ]
+    return EventBatch(batch_id="batch_test", events=tuple(events))
+
+
+def test_detail_flows_from_grouping_into_derived_blocks():
+    batch = _batch([("Safari", 0), ("Safari", 5)])
+    grouping = _Grouping(blocks=[
+        _Group(label="Reading Gumclaw docs", category="research",
+               detail="Read the 'How Gumclaw Works' page, mostly the pricing section.",
+               event_ids=["evt_0001", "evt_0002"]),
+    ])
+    blocks = derive_blocks(batch, grouping).blocks
+    assert blocks[0].detail.startswith("Read the 'How Gumclaw Works'")
+
+
+def test_old_cached_grouping_without_detail_still_validates():
+    g = _Group(label="Coding", category="coding", event_ids=["evt_0001"])
+    assert g.detail == ""
+
+
+def test_merge_keeps_both_details_in_order_and_caps_length():
+    a = {"start": "s", "end": "m", "duration_seconds": 600, "label": "A", "category": "coding",
+         "detail": "First thing.", "app_name": "Cursor", "source_event_ids": ["e1"]}
+    b = {"start": "m", "end": "e", "duration_seconds": 60, "label": "B", "category": "coding",
+         "detail": "Second thing.", "app_name": "Cursor", "source_event_ids": ["e2"]}
+    merged = _merge_two(a, b)
+    assert merged["detail"] == "First thing. Second thing."
+    long = dict(b, detail="x" * 1000)
+    assert len(_merge_two(a, long)["detail"]) <= 600
+
+
+def test_summarize_day_tolerates_blocks_without_detail():
+    legacy = {"start": "2026-07-05T09:00:00", "end": "2026-07-05T09:30:00",
+              "duration_seconds": 1800, "label": "Work", "category": "coding",
+              "app_name": "Cursor", "source_event_ids": ["e1"]}
+    day = summarize_day("2026-07-05", [legacy])
+    assert day["blocks"][0]["detail"] == ""
+
+
+def test_store_roundtrips_detail_and_migrates_old_dbs(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    db = tmp_path / "j.sqlite"
+
+    # Simulate a pre-detail database: create the old shape by hand.
+    import sqlite3
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE days (date TEXT PRIMARY KEY, writeup TEXT NOT NULL, created_at TIMESTAMP NOT NULL);"
+        "CREATE TABLE blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL,"
+        " start TIMESTAMP NOT NULL, end TIMESTAMP NOT NULL, label TEXT NOT NULL,"
+        " app_name TEXT NOT NULL, category TEXT, duration_seconds INTEGER,"
+        " source_event_ids TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0);"
+    )
+    conn.execute(
+        "INSERT INTO blocks(date, start, end, label, app_name, category, duration_seconds,"
+        " source_event_ids) VALUES ('2026-07-01','a','b','Old row','App','coding',60,'[]')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(db)  # migration runs here
+    assert store.get_blocks("2026-07-01")[0]["detail"] == ""
+
+    store.save_day("2026-07-05", "writeup", [{
+        "start": "2026-07-05T09:00:00", "end": "2026-07-05T10:00:00",
+        "duration_seconds": 3600, "label": "Deep dive", "category": "research",
+        "detail": "Compared JWT rotation approaches on MDN and Stack Overflow.",
+        "app_name": "Safari", "source_event_ids": ["e1"],
+    }])
+    got = store.get_blocks("2026-07-05")[0]
+    assert got["detail"].startswith("Compared JWT rotation")
+    store.close()

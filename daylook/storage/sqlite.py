@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS blocks (
     start            TIMESTAMP NOT NULL,
     end              TIMESTAMP NOT NULL,
     label            TEXT NOT NULL,
+    -- 1-2 concrete sentences of what actually happened in the block (Analyst-written from
+    -- the screenshots; '' when there's nothing beyond the label). The journal's substance.
+    detail           TEXT NOT NULL DEFAULT '',
     app_name         TEXT NOT NULL,
     category         TEXT,
     duration_seconds INTEGER,
@@ -44,6 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_blocks_date ON blocks(date);
 # in place (SQLite has no "ADD COLUMN IF NOT EXISTS", so we probe pragma table_info first).
 _MIGRATIONS = [
     ("blocks", "manual", "ALTER TABLE blocks ADD COLUMN manual INTEGER NOT NULL DEFAULT 0"),
+    ("blocks", "detail", "ALTER TABLE blocks ADD COLUMN detail TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -87,14 +91,15 @@ class Store:
             # calendar (manual=1) is kept, so re-processing a day never wipes their edits.
             self.conn.execute("DELETE FROM blocks WHERE date = ? AND manual = 0", (date,))
             self.conn.executemany(
-                "INSERT INTO blocks(date, start, end, label, app_name, category, "
-                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                "INSERT INTO blocks(date, start, end, label, detail, app_name, category, "
+                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                 [
                     (
                         date,
                         b["start"],
                         b["end"],
                         b["label"],
+                        b.get("detail") or "",
                         b["app_name"],
                         b.get("category"),
                         b.get("duration_seconds"),
@@ -114,14 +119,14 @@ class Store:
 
     def get_blocks(self, date: str) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, date, start, end, label, app_name, category, duration_seconds, "
+            "SELECT id, date, start, end, label, detail, app_name, category, duration_seconds, "
             "source_event_ids, manual FROM blocks WHERE date = ? ORDER BY start", (date,)
         ).fetchall()
         return [self._block_row(r) for r in rows]
 
     def get_block(self, block_id: int) -> dict | None:
         row = self.conn.execute(
-            "SELECT id, date, start, end, label, app_name, category, duration_seconds, "
+            "SELECT id, date, start, end, label, detail, app_name, category, duration_seconds, "
             "source_event_ids, manual FROM blocks WHERE id = ?", (block_id,)
         ).fetchone()
         return self._block_row(row) if row else None
@@ -154,7 +159,7 @@ class Store:
 
     def find_blocks_by_app(self, app_name: str) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, date, start, end, label, app_name, category, duration_seconds, "
+            "SELECT id, date, start, end, label, detail, app_name, category, duration_seconds, "
             "source_event_ids, manual FROM blocks WHERE app_name = ? ORDER BY date, start",
             (app_name,),
         ).fetchall()
@@ -172,19 +177,20 @@ class Store:
         category: str | None,
         duration_seconds: int,
         manual: bool = True,
+        detail: str = "",
     ) -> int:
         """Insert a single block and return its new id. Used for user-added calendar entries;
         such blocks carry ``source_event_ids=[]`` (they trace to the user, not to capture)."""
         with self.conn:
             cur = self.conn.execute(
-                "INSERT INTO blocks(date, start, end, label, app_name, category, "
-                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (date, start, end, label, app_name, category, duration_seconds,
+                "INSERT INTO blocks(date, start, end, label, detail, app_name, category, "
+                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (date, start, end, label, detail or "", app_name, category, duration_seconds,
                  json.dumps([]), 1 if manual else 0),
             )
             return int(cur.lastrowid)
 
-    _EDITABLE = {"start", "end", "label", "app_name", "category", "duration_seconds"}
+    _EDITABLE = {"start", "end", "label", "detail", "app_name", "category", "duration_seconds"}
 
     def update_block(self, block_id: int, **fields) -> bool:
         """Update selected columns of one block. Returns False if the id doesn't exist."""

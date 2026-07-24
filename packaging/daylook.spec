@@ -42,6 +42,8 @@ for pkg in (
     "objc",         # pyobjc core
     "Quartz",       # CGWindowList (window title / z-order)
     "Cocoa",        # NSWorkspace
+    "AppKit",       # NSApplication reopen loop (launcher tap-to-open fix)
+    "Foundation",   # NSObject for the reopen delegate
     "tzdata",       # zoneinfo data, if present
 ):
     _add_all(pkg)
