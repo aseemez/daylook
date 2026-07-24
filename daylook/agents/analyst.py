@@ -129,6 +129,53 @@ def compute_dwell(events: list[CaptureEvent]) -> dict[str, int]:
     return dwell
 
 
+# --- Detail hygiene (detailed, but never verbose or repetitive) -----------------------
+
+def tidy_detail(text: str, max_sentences: int = 2, max_chars: int = 260) -> str:
+    """Keep a detail specific but tight: the user asked for detailed, NOT verbose or vague.
+
+    Merging blocks concatenates their details, and the model sometimes restates the same fact
+    a few ways — so a merged 'Away' stretch could end up 4 near-identical sentences. This
+    splits into sentences, drops near-duplicates (case-insensitive, ignoring leading filler),
+    keeps at most ``max_sentences`` whole sentences that fit ``max_chars``, and only ever cuts
+    mid-sentence as a last resort. **Idempotent** — running it on its own output is a no-op, so
+    it's safe to call at derivation and again at every merge without piling up ellipses. Purely
+    cosmetic: no facts are invented, only trimmed."""
+    if not text:
+        return ""
+    import re
+    # Normalise leftover truncation marks from a previous pass (…, trailing dashes, dot runs)
+    # so re-tidying doesn't compound them.
+    text = re.sub(r"[…]+", " ", text)
+    text = re.sub(r"\.{2,}", " ", text)
+    text = re.sub(r"\s*[—\-]\s*$", "", text.strip())
+    raw = re.split(r"(?<=[.!?])\s+", text.strip())
+    seen: set[str] = set()
+    kept: list[str] = []
+    total = 0
+    for s in raw:
+        s = s.strip().strip("—- ")
+        if not s:
+            continue
+        norm = re.sub(r"[^a-z0-9 ]", "", s.lower())
+        norm = re.sub(r"^(the|a|then|also|and|screen|user|it|this) ", "", norm).strip()
+        key = norm[:50]
+        if key in seen:
+            continue
+        seen.add(key)
+        # Take a whole sentence if it fits; stop once we'd blow the budget (but always keep 1).
+        if kept and total + len(s) + 1 > max_chars:
+            break
+        kept.append(s)
+        total += len(s) + 1
+        if len(kept) >= max_sentences:
+            break
+    out = " ".join(kept)
+    if len(out) > max_chars:  # a single over-long sentence: hard cut, one ellipsis
+        out = out[:max_chars].rsplit(" ", 1)[0].rstrip(",;:.—- ") + "…"
+    return out
+
+
 # --- Block derivation (deterministic, anti-hallucination) -----------------------------
 
 def derive_blocks(
@@ -174,6 +221,7 @@ def derive_blocks(
             detail = (grouping.blocks[cur_key].detail or "").strip()
         else:
             label, category, detail = "Unlabeled activity", "other", ""
+        detail = tidy_detail(detail)
         if category not in CATEGORIES:
             category = "other"
         app_name = Counter(e.app_name for e in cur).most_common(1)[0][0]
@@ -574,7 +622,7 @@ def _merge_two(a: dict, b: dict) -> dict:
         "duration_seconds": a["duration_seconds"] + b["duration_seconds"],
         "label": lead["label"],
         "category": lead["category"],
-        "detail": " ".join(details)[:600],
+        "detail": tidy_detail(" ".join(details)),
         "app_name": lead["app_name"],
         "source_event_ids": list(a["source_event_ids"]) + list(b["source_event_ids"]),
     }

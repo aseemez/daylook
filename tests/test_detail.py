@@ -44,6 +44,29 @@ def test_old_cached_grouping_without_detail_still_validates():
     assert g.detail == ""
 
 
+def test_tidy_detail_caps_sentences_and_dedupes_repeats():
+    from daylook.agents.analyst import tidy_detail
+    # Merge-verbosity (the user's complaint): 4 sentences, two of them repeats, trimmed to 2.
+    noisy = ("Left the video paused on a title card. Screen didn't change the whole time. "
+             "Left the video paused on a title card. Screen didn't change the whole time.")
+    out = tidy_detail(noisy)
+    assert out == "Left the video paused on a title card. Screen didn't change the whole time."
+
+    # A single specific sentence is left intact.
+    one = "Watched 'You need to read less code' by Theo and scrolled the comments."
+    assert tidy_detail(one) == one
+
+    # Very long text is hard-capped with a single ellipsis; re-tidying never compounds it.
+    capped = tidy_detail("word " * 200)
+    assert len(capped) <= 261 and capped.endswith("…") and "……" not in capped
+    assert "……" not in tidy_detail(capped)
+
+    # Real multi-sentence details (the actual merge case) ARE fully idempotent.
+    real = ("Watched Matt Pocock's AI coding video. Left it paused on a title card for a while.")
+    assert tidy_detail(real) == tidy_detail(tidy_detail(real)) == real
+    assert tidy_detail("") == ""
+
+
 def test_merge_keeps_both_details_in_order_and_caps_length():
     a = {"start": "s", "end": "m", "duration_seconds": 600, "label": "A", "category": "coding",
          "detail": "First thing.", "app_name": "Cursor", "source_event_ids": ["e1"]}
