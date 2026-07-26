@@ -372,6 +372,9 @@
   .gev .gtime { margin-left: auto; font: 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--ink-2); white-space: nowrap; flex: 0 0 auto; }
   .gev .gdetail { font-size: 11.5px; line-height: 1.45; color: var(--ink-2); overflow: hidden; }
+  /* Blocks imported from a phone/iPad (Screen Time) read as ambient, not captured — a dashed
+     edge sets them apart from this Mac's own capture. The 📱 in the label carries the rest. */
+  .gev.device { border-style: dashed; }
   .gev.sel { z-index: 6; height: auto !important; box-shadow: var(--shadow); }
   .gev.sel .glabel { white-space: normal; }
   .gev .gmeta { font-size: 10.5px; color: var(--muted); }
@@ -1016,7 +1019,8 @@
           <button class="abtn" type="button" data-act="edit" data-id="${b.id}">Edit</button>
           <button class="abtn danger" type="button" data-act="del" data-id="${b.id}">Delete</button>
         </div>`;
-    return `<div class="gev${sel ? " sel" : ""}" data-id="${b.id}" role="button" tabindex="0"
+    const isDevice = b.source && b.source !== "mac";
+    return `<div class="gev${sel ? " sel" : ""}${isDevice ? " device" : ""}" data-id="${b.id}" role="button" tabindex="0"
         style="--lane:${laneColor(lane)};top:${row.top}px;${sel ? `min-height:${row.h}px` : `height:${row.h}px`}">
       <div class="gtop">
         <span class="glabel">${escapeHtml(b.label)}</span>

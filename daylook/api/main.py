@@ -97,12 +97,30 @@ def _auto_journal_once() -> None:
             with observe("pipeline", "auto_journal") as rec:
                 result = Pipeline(memory).process_day()
                 rec["output"] = f"journaled {result.get('date') or 'nothing'}"
+            _import_screentime(memory)
         finally:
             memory.close()
     except Exception as e:
         with observe("pipeline", "auto_journal_error", str(e)[:120]):
             pass
     _prune_processed()
+
+
+def _import_screentime(memory: MemoryAgent) -> None:
+    """Fold cross-device (iPhone/iPad) Screen Time usage into the journal, if available.
+
+    A no-op until the user grants Full Disk Access + enables Share Across Devices (the reader
+    reports ``available=False`` and we stay quiet). Best-effort — never blocks journaling.
+    """
+    from daylook.capture_script.screentime_import import import_screentime
+    from daylook.observability import observe
+    try:
+        result = import_screentime(memory)
+    except Exception:
+        return
+    if result.get("available"):
+        with observe("screentime", "import") as rec:
+            rec["output"] = f"{result['imported']} block(s) over {len(result['days'])} day(s)"
 
 
 def _prune_processed() -> None:

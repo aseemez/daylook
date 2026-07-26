@@ -38,7 +38,11 @@ CREATE TABLE IF NOT EXISTS blocks (
     source_event_ids TEXT NOT NULL,
     -- 1 = the user added/edited this block by hand in the calendar; 0 = derived by the pipeline.
     -- Manual blocks survive re-processing of the same day (save_day only clears derived ones).
-    manual           INTEGER NOT NULL DEFAULT 0
+    manual           INTEGER NOT NULL DEFAULT 0,
+    -- Where the block came from: 'mac' = this Mac's native capture (the pipeline), or a device
+    -- name ('iphone'/'ipad') for blocks imported from Screen Time cross-device usage. Only
+    -- 'mac' pipeline blocks are cleared on re-processing; imported/manual blocks persist.
+    source           TEXT NOT NULL DEFAULT 'mac'
 );
 CREATE INDEX IF NOT EXISTS idx_blocks_date ON blocks(date);
 """
@@ -48,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_blocks_date ON blocks(date);
 _MIGRATIONS = [
     ("blocks", "manual", "ALTER TABLE blocks ADD COLUMN manual INTEGER NOT NULL DEFAULT 0"),
     ("blocks", "detail", "ALTER TABLE blocks ADD COLUMN detail TEXT NOT NULL DEFAULT ''"),
+    ("blocks", "source", "ALTER TABLE blocks ADD COLUMN source TEXT NOT NULL DEFAULT 'mac'"),
 ]
 
 
@@ -87,12 +92,15 @@ class Store:
                 "created_at=excluded.created_at",
                 (date, writeup, now),
             )
-            # Only clear the pipeline-derived blocks; anything the user added by hand in the
-            # calendar (manual=1) is kept, so re-processing a day never wipes their edits.
-            self.conn.execute("DELETE FROM blocks WHERE date = ? AND manual = 0", (date,))
+            # Only clear THIS Mac's pipeline-derived blocks. Hand-added blocks (manual=1) and
+            # blocks imported from another device's Screen Time (source!='mac') are kept, so
+            # re-processing a day never wipes the user's edits or their phone/iPad activity.
+            self.conn.execute(
+                "DELETE FROM blocks WHERE date = ? AND manual = 0 AND source = 'mac'", (date,))
             self.conn.executemany(
                 "INSERT INTO blocks(date, start, end, label, detail, app_name, category, "
-                "duration_seconds, source_event_ids, manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                "duration_seconds, source_event_ids, manual, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'mac')",
                 [
                     (
                         date,
@@ -120,14 +128,14 @@ class Store:
     def get_blocks(self, date: str) -> list[dict]:
         rows = self.conn.execute(
             "SELECT id, date, start, end, label, detail, app_name, category, duration_seconds, "
-            "source_event_ids, manual FROM blocks WHERE date = ? ORDER BY start", (date,)
+            "source_event_ids, manual, source FROM blocks WHERE date = ? ORDER BY start", (date,)
         ).fetchall()
         return [self._block_row(r) for r in rows]
 
     def get_block(self, block_id: int) -> dict | None:
         row = self.conn.execute(
             "SELECT id, date, start, end, label, detail, app_name, category, duration_seconds, "
-            "source_event_ids, manual FROM blocks WHERE id = ?", (block_id,)
+            "source_event_ids, manual, source FROM blocks WHERE id = ?", (block_id,)
         ).fetchone()
         return self._block_row(row) if row else None
 
@@ -160,7 +168,7 @@ class Store:
     def find_blocks_by_app(self, app_name: str) -> list[dict]:
         rows = self.conn.execute(
             "SELECT id, date, start, end, label, detail, app_name, category, duration_seconds, "
-            "source_event_ids, manual FROM blocks WHERE app_name = ? ORDER BY date, start",
+            "source_event_ids, manual, source FROM blocks WHERE app_name = ? ORDER BY date, start",
             (app_name,),
         ).fetchall()
         return [self._block_row(r) for r in rows]
@@ -210,6 +218,33 @@ class Store:
         with self.conn:
             cur = self.conn.execute("DELETE FROM blocks WHERE id = ?", (block_id,))
             return cur.rowcount > 0
+
+    def replace_imported_blocks(self, date: str, blocks: list[dict]) -> int:
+        """Idempotently replace a day's cross-device (non-'mac') imported blocks.
+
+        Screen Time import runs hourly, so it must overwrite its previous output for the day
+        rather than pile up duplicates. Clears every non-manual block on ``date`` whose source
+        isn't this Mac's native capture, then inserts ``blocks`` (each carries its own
+        ``source`` like 'iphone'/'ipad'). Mac pipeline blocks and manual edits are untouched.
+        Returns the number inserted.
+        """
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM blocks WHERE date = ? AND manual = 0 AND source <> 'mac'", (date,))
+            self.conn.executemany(
+                "INSERT INTO blocks(date, start, end, label, detail, app_name, category, "
+                "duration_seconds, source_event_ids, manual, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                [
+                    (
+                        date, b["start"], b["end"], b["label"], b.get("detail") or "",
+                        b.get("app_name") or "", b.get("category") or "other",
+                        b.get("duration_seconds"), json.dumps([]), b.get("source") or "iphone",
+                    )
+                    for b in blocks
+                ],
+            )
+            return len(blocks)
 
     @staticmethod
     def _block_row(r: sqlite3.Row) -> dict:
