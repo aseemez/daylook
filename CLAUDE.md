@@ -238,7 +238,26 @@ Target: **~10 paying users, macOS only** (Windows is a later port of the capture
 - **Dev/test** — free-tier AI Studio key (see Auth & cost). Never bill dev work to the production key.
 - **Trust upgrades when revenue exists** — Apple Developer ID ($99/yr, removes the Gatekeeper "Open Anyway" scare) → auto-update → Firestore-backed metering.
 
-## Current status (2026-07-24)
+## Current status (2026-07-26)
+
+**Ambient-capture session (Phases 1–3 shipped; see PROGRESS.md → 2026-07-26).** Daylook is now a
+**menubar background app** (`LSUIElement`, no Dock icon): `launcher._run_gui` runs an `NSStatusItem`
+menu (status glyph, Pause/Resume, Open, Settings, Quit) on the existing NSApplication loop.
+**Auto-start** — one opt-in toggle ("Track automatically when I open my Mac") sets `launch_at_login`
+(via `loginitem.py`: SMAppService + LaunchAgent fallback) + `auto_start_capture`, both in
+`settings.json` (`GET/POST /settings`); capture begins at launch. **Sleep-frugal** — the launcher
+pauses capture on `NSWorkspaceWillSleep` and resumes on `DidWake` via a `system_pause_event`
+threaded through `real_capture.run` (state `system_sleep`, auto-resumes, never clears a manual
+pause); plus `analyst.idle_batch_analysis` skips the vision call for a fully-static batch (zero
+tokens for idle time). **Cross-device** — `screentime_import.py` reads Apple's `knowledgeC.db`
+(Screen Time "Share Across Devices"), pulls `/app/usage` for **non-Mac** devices (tagged via
+`ZSOURCE.ZDEVICEID`), and imports 📱 blocks (`blocks.source` column; save_day only clears
+`source='mac'`; hourly idempotent import). iOS *cannot* be screen-captured by a third party (Apple
+blocks it — verified); the honest ceiling is app/web/media usage, and it's **gated on a one-time
+Full Disk Access grant** (`python -m daylook.capture_script.screentime_import --probe` is the spike;
+no-op until granted). Tests 127 passed / 6 skipped.
+
+## Previous status (2026-07-24)
 
 **Accuracy + always-current journal session** (details in PROGRESS.md → 2026-07-24): instant
 screen-off/lock pause in capture; deterministic away-time rule at analysis (`screen=changed|static`

@@ -41,7 +41,38 @@ after that, rebuilds keep the grant.
 
 ## TL;DR
 
-### Accuracy + always-current journal — 2026-07-24 (this session)
+### Ambient capture — auto-start, sleep-frugal, cross-device — 2026-07-26 (this session)
+
+Three features (plan: `~/.claude/plans/so-the-journal-is-adaptive-yeti.md`), all shipped, tests
+**127 passed / 6 skipped**:
+
+- **P1 — auto-start menubar app.** Packaged app is now `LSUIElement` (no Dock icon);
+  `launcher._run_gui` builds an `NSStatusItem` menu (status glyph · Pause/Resume · Open journal ·
+  Settings · Quit) on the existing NSApplication loop, keeps the reopen handler. One opt-in toggle
+  in the sidebar ("Track automatically when I open my Mac") flips `launch_at_login` +
+  `auto_start_capture` (`settings.py`, `GET/POST /settings`); `loginitem.py` registers the login
+  item via **SMAppService** (LaunchAgent plist fallback). Capture auto-starts at launch when on.
+  Default OFF = the opt-in *is* the standing capture consent.
+- **P2 — sleep-aware + token-frugal.** `system_pause_event` threaded through `real_capture.run`
+  (new state `system_sleep`, auto-resumes on wake, never clears a manual pause), set/cleared by the
+  launcher's `NSWorkspaceWillSleep`/`DidWake` observers → a sleeping Mac emits nothing. Plus
+  `analyst.idle_batch_analysis`: a batch that never visibly changed (all-static, ≥ stale threshold)
+  short-circuits to a `break` block with **zero** vision calls. New `test_sleep.py`.
+- **P3 — iPhone/iPad into the journal via Screen Time.** After grilling (the "find a way" thread):
+  iOS can't be screen-captured by third parties (Apple blocks it — verified live + 2 forensics
+  sources), and there's no permission-free path. BUT with Screen Time **Share Across Devices** on,
+  phone/iPad usage syncs to the Mac's `knowledgeC.db`, device-tagged. `screentime_import.py` reads
+  `/app/usage` for **non-Mac** devices and imports 📱 blocks (`blocks.source` column; `save_day`
+  only clears `source='mac'`; `replace_imported_blocks` = idempotent hourly import). **Gated on a
+  one-time Full Disk Access grant** — `python -m daylook.capture_script.screentime_import --probe`
+  is the spike (verified it correctly self-reports "needs Full Disk Access" until granted). Honest
+  ceiling: app/web/media usage, never "which reel." Tested against a synthetic knowledgeC fixture.
+
+**Owner action items for P1/P3 to go live:** rebuild + install (done this session), then in the app
+turn on "Track automatically"; for phone data, enable Screen Time → Share Across Devices and grant
+Daylook **Full Disk Access** (System Settings → Privacy & Security), then run the probe to confirm.
+
+### Accuracy + always-current journal — 2026-07-24 (previous session)
 
 Root cause of the owner's 07-23 complaints ("Gumclaw deep dive I never did", "Matt Pocock wasn't
 92 min"): that day ran on the pre-stale-pause build, and **heartbeats kept firing against a
