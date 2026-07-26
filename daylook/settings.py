@@ -38,6 +38,10 @@ _DEFAULTS: dict = {
     "api_key_mode": "relay",   # "relay" | "own_key"
     "invite_token": "",        # the invite token (relay) or the user's own AI Studio key
     "relay_url": DEFAULT_RELAY_URL,
+    # Ambient-capture preferences (Phase 1). Both default OFF: turning them on is the user's
+    # standing consent to record without a per-session click (CLAUDE.md's capture consent rule).
+    "auto_start_capture": False,  # begin recording automatically when the app launches
+    "launch_at_login": False,     # register the app as a macOS login item
 }
 
 

@@ -175,6 +175,9 @@
   }
   @keyframes recpulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 55%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--rec) 0%, transparent); } }
   .sb-foot-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .setting-row { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--ink-2);
+    cursor: pointer; padding: 3px 2px; line-height: 1.35; }
+  .setting-row input { accent-color: var(--accent); width: 15px; height: 15px; flex: 0 0 auto; cursor: pointer; margin: 0; }
   .sb-privacy { margin: 0; font-size: 10.5px; color: var(--muted); text-align: center; }
   :root { --rec: #D64545; }
   :root[data-theme="dark"] { --rec: #F26D6D; }
@@ -527,6 +530,9 @@
       Screen&nbsp;Recording, then <strong>quit and reopen Daylook</strong> — the grant only
       takes effect after a full restart. If the toggle is already on, turn it off and on again.
     </div>
+    <label class="setting-row" title="Launch Daylook at login and begin tracking automatically. You can pause anytime.">
+      <input type="checkbox" id="auto-start"> Track automatically when I open my Mac
+    </label>
     <div class="sb-foot-row">
       <span class="pill"><span class="dot" id="status-dot"></span><span id="status-text">connecting…</span></span>
       <button class="theme-toggle" id="theme-toggle" type="button" title="Light / dark" aria-label="Toggle theme">
@@ -1260,19 +1266,21 @@
       const st = await (await fetch("/capture/status")).json();
       capRunning = !!st.running;
       capPaused = !!st.paused;
-      const autoPaused = !!st.auto_paused, screenOff = !!st.screen_off, blind = !!st.blind;
+      const autoPaused = !!st.auto_paused, screenOff = !!st.screen_off,
+            systemSleep = !!st.system_sleep, blind = !!st.blind;
       const cap = $("cap-toggle");
       // The pill must always say what is ACTUALLY happening — paused or idle must never
       // look like recording (that's how a user loses an afternoon to a forgotten pause).
-      cap.classList.toggle("on", capRunning && !capPaused && !autoPaused && !screenOff);
+      cap.classList.toggle("on", capRunning && !capPaused && !autoPaused && !screenOff && !systemSleep);
       $("cap-text").textContent = !capRunning ? "Start tracking"
         : capPaused ? "Paused — nothing is recorded"
         : blind ? "Recording · can’t see screen"
+        : systemSleep ? "Asleep · paused"
         : screenOff ? "Screen off · paused"
         : autoPaused ? "Idle · paused automatically"
         : `Recording · ${fmtElapsed(st.elapsed_seconds)}`;
       cap.setAttribute("aria-label", capRunning ? "Recording your screen — click to stop" : "Start tracking your screen");
-      $("tb-rec")?.classList.toggle("on", capRunning && !capPaused && !autoPaused && !screenOff);
+      $("tb-rec")?.classList.toggle("on", capRunning && !capPaused && !autoPaused && !screenOff && !systemSleep);
       $("cap-warn")?.classList.toggle("on", blind && !capPaused);
       const pauseBtn = $("cap-pause");
       if (pauseBtn) {
@@ -1304,6 +1312,28 @@
     finally { capBusy = false; $("cap-toggle").disabled = false; }
   });
   refreshCapture(); setInterval(refreshCapture, 5000);
+
+  // ---------- ambient auto-start (launch at login + begin capturing) ----------
+  // One switch, because that's how the user thinks about it ("just record when I open my
+  // Mac"): it flips both launch_at_login and auto_start_capture together.
+  async function refreshSettings() {
+    try {
+      const s = await (await fetch("/settings")).json();
+      $("auto-start").checked = !!(s.auto_start_capture || s.launch_at_login);
+    } catch { /* no /settings on older builds — leave unchecked */ }
+  }
+  $("auto-start").addEventListener("change", async (e) => {
+    const on = e.target.checked;
+    try {
+      await fetch("/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_start_capture: on, launch_at_login: on }) });
+      // Turning it on with nothing recording yet? Start now so "automatic" feels immediate.
+      if (on && !capRunning) {
+        await fetch("/capture/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        refreshCapture();
+      }
+    } catch { /* offline — the box reverts on next refreshSettings */ }
+  });
 
   // ---------- first-run setup ----------
   const backdrop = $("setup-backdrop"), invite = $("invite"), saveBtn = $("save-invite"), setupErr = $("setup-err");
@@ -1340,6 +1370,7 @@
   }
   async function boot() {
     loadDates();
+    refreshSettings();
     try {
       const res = await fetch("/setup");
       if (res.ok) { const s = await res.json(); if (!s.configured) { backdrop.classList.add("on"); invite.focus(); return; } }

@@ -60,6 +60,11 @@ class RootAgent:
         self._capture_thread: threading.Thread | None = None
         self._capture_stop: threading.Event | None = None
         self._capture_pause: threading.Event | None = None  # set = user asked to hold
+        # OS-driven pause: the launcher sets this on system sleep and clears it on wake, so a
+        # sleeping Mac captures nothing. Separate from _capture_pause so a wake never clears a
+        # deliberate user pause. Lives across capture sessions so a sleep/wake that straddles a
+        # start still applies.
+        self._system_pause = threading.Event()
         self._capture_started_at: float | None = None  # epoch secs, for the live "recording" UI
         self._runner = self._build_runner()
 
@@ -262,6 +267,7 @@ class RootAgent:
                     duration_seconds=duration,
                     stop_event=stop,
                     pause_event=pause,
+                    system_pause_event=self._system_pause,
                 )
             except Exception as e:  # never let a capture error take down the app
                 from daylook.observability import observe
@@ -322,6 +328,17 @@ class RootAgent:
         self._capture_pause.clear()
         return {"status": "recording"}
 
+    def system_sleep(self) -> None:
+        """Called by the launcher on ``NSWorkspaceWillSleepNotification``. Suspends capture for
+        the duration of the sleep so a sleeping Mac records nothing (no events, no tokens). A
+        no-op on the capture loop when idle; the flag simply persists until wake."""
+        self._system_pause.set()
+
+    def system_wake(self) -> None:
+        """Called by the launcher on ``NSWorkspaceDidWakeNotification``. Clears the OS pause so
+        capture resumes on its own — but never touches a deliberate user pause."""
+        self._system_pause.clear()
+
     def capture_status(self) -> dict:
         """Whether a background capture is running, for how long (seconds), and whether it can
         actually SEE the screen (see ``real_capture.write_health`` — a revoked Screen Recording
@@ -351,6 +368,9 @@ class RootAgent:
             ),
             "screen_off": bool(
                 running and not paused and health and health.get("state") == "screen_off"
+            ),
+            "system_sleep": bool(
+                running and not paused and health and health.get("state") == "system_sleep"
             ),
         }
 

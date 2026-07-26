@@ -89,6 +89,28 @@ def test_long_static_run_is_carved_out_as_break_in_code():
     assert sorted(covered) == sorted(e.event_id for e in events)
 
 
+def test_idle_batch_skips_the_vision_call_entirely(monkeypatch, tmp_path):
+    # A whole batch that never visibly changed must produce a break block with ZERO model
+    # calls — the token-frugality win. We assert llm_grouping is never invoked.
+    from daylook.agents import analyst
+    from daylook.agents.analyst import analyze_batch
+
+    events = [_event(i, i * 12) for i in range(1, 8)]  # ~72 min span, well over threshold
+    for e in events:  # identical static frames on disk
+        _frame(busy=False, seed=0).save(tmp_path / f"{e.event_id}.jpg", "JPEG", quality=85)
+    batch = EventBatch(batch_id="idle", events=tuple(events))
+
+    def boom(*a, **k):
+        raise AssertionError("llm_grouping was called for a provably-idle batch")
+    monkeypatch.setattr(analyst, "llm_grouping", boom)
+
+    result = analyze_batch(batch, pending_dir=tmp_path, all_events=events)
+    assert len(result.blocks) == 1
+    assert result.blocks[0].category == "break"
+    assert result.blocks[0].label.startswith("Away")
+    assert result.blocks[0].duration_seconds >= 10 * 60
+
+
 def test_short_static_pause_is_left_to_the_model():
     # 4 static minutes mid-video (buffering, a long still shot) stays one block: under the
     # 10-minute bar, idleness is not provable and the model's grouping stands.

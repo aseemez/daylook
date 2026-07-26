@@ -276,10 +276,10 @@ def write_health(
     """Persist the current capture-vision verdict for the app/UI to read. Best-effort —
     health reporting must never be able to crash the capture loop itself.
 
-    ``state`` is the loop's mode: "recording", "paused" (user asked), "auto_paused"
-    (stale screen — see :class:`StaleTracker`), or "screen_off" (locked / display asleep —
-    see :func:`screen_unavailable`). It rides in the same file because the UI needs mode
-    and blindness together to label the recording pill truthfully."""
+    ``state`` is the loop's mode: "recording", "paused" (user asked), "system_sleep" (the
+    Mac slept — auto-resumes on wake), "auto_paused" (stale screen — see :class:`StaleTracker`),
+    or "screen_off" (locked / display asleep — see :func:`screen_unavailable`). It rides in the
+    same file because the UI needs mode and blindness together to label the pill truthfully."""
     try:
         blind = bool(
             permission_granted is False or (detector is not None and detector.blind)
@@ -441,6 +441,7 @@ def run(
     duration_seconds: float | None = None,
     stop_event: "object | None" = None,
     pause_event: "object | None" = None,
+    system_pause_event: "object | None" = None,
     stale_pause_seconds: float | None = None,
     screen_off_fn: "object | None" = None,
 ) -> int:
@@ -463,6 +464,13 @@ def run(
     tear down and re-request anything. On resume the debounce state and heartbeat clock are
     reset, so the first post-resume event is a fresh, debounced switch — never a phantom
     heartbeat for time that was paused.
+
+    ``system_pause_event`` is the same mechanism but driven by the OS, not the user: the app
+    sets it on ``NSWorkspaceWillSleepNotification`` and clears it on ``DidWake`` (see
+    ``launcher._run_gui``), so a sleeping Mac emits nothing (zero events, zero tokens) and
+    resumes itself on wake. Kept distinct from ``pause_event`` only so the UI can say *why*
+    it paused ("system_sleep" vs a user "paused") — a manual pause must never be auto-cleared
+    by a wake.
 
     ``screen_off_fn`` (default :func:`screen_unavailable`; tests inject a fake) is polled
     every tick — a locked screen or sleeping display pauses capture *immediately*, no
@@ -522,7 +530,7 @@ def run(
     tracker = StaleTracker(stale_seconds, start)
     probe_interval = heartbeat_seconds if heartbeat_seconds > 0 else 12.0
     auto_paused = False
-    was_paused = False
+    last_pause_reason = "recording"  # tracks manual "paused" vs "system_sleep" vs recording
     last_probe_at = start
 
     # Screen-off watch: lock / display sleep pauses instantly (see screen_unavailable).
@@ -545,25 +553,30 @@ def run(
                       f"Wrote {written} event(s) to {pending}.")
                 break
 
-            # Manual pause: user asked to hold. Nothing is observed or written while set.
+            # Pause gates: a user hold (pause_event) or an OS sleep (system_pause_event).
+            # Both suspend all capture; they differ only in what the UI is told and in who
+            # clears them (the user vs a wake notification). Manual outranks system in the
+            # reported reason. Nothing is observed or written while either is set.
             manual_paused = pause_event is not None and pause_event.is_set()
-            if manual_paused != was_paused:
-                was_paused = manual_paused
-                if manual_paused:
-                    print("[real_capture] paused by user.")
-                else:
+            system_paused = system_pause_event is not None and system_pause_event.is_set()
+            reason = ("paused" if manual_paused
+                      else "system_sleep" if system_paused else "recording")
+            if reason != last_pause_reason:
+                if reason == "recording":
                     # Fresh eyes on resume: re-debounce whatever is frontmost (it emits as a
-                    # new switch) and reset the heartbeat + staleness clocks so paused time
-                    # can never be credited as presence.
+                    # new switch) and reset the heartbeat + staleness clocks so paused (or
+                    # slept) time can never be credited as presence.
                     state = DebounceState()
                     last_emit_at = time.monotonic()
                     tracker.last_change_at = last_emit_at
                     auto_paused = False
-                    print("[real_capture] resumed by user.")
+                    print("[real_capture] resumed.")
+                else:
+                    print(f"[real_capture] paused ({reason}).")
                 if not dry_run:
-                    write_health(permission, detector, running=True,
-                                 state="paused" if manual_paused else "recording")
-            if manual_paused:
+                    write_health(permission, detector, running=True, state=reason)
+                last_pause_reason = reason
+            if manual_paused or system_paused:
                 _wait()
                 continue
 

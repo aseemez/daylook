@@ -103,6 +103,10 @@ app = BUNDLE(
         "CFBundleShortVersionString": "0.1.0",
         "CFBundleVersion": "0.1.0",
         "NSHighResolutionCapable": True,
+        # Menubar background app (Phase 1): no Dock icon / app-switcher entry. The launcher
+        # runs an NSStatusItem menu as the control surface; reopen (Finder double-click /
+        # `open -a`) still opens the journal in the browser.
+        "LSUIElement": True,
         # We open the user's default browser at the local server, so no in-app WebView is needed.
         # Screen Recording is requested at runtime by the capture child (TCC prompt, attributed to
         # this bundle id) — no Info.plist usage string exists for Screen Recording on macOS.

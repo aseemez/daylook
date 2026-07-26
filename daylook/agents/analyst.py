@@ -571,6 +571,56 @@ def enforce_static_breaks(
     return BatchAnalysis(batch_id=analysis.batch_id, date=analysis.date, blocks=out)
 
 
+# --- Zero-token idle batch (cost discipline) ------------------------------------------
+
+def idle_batch_analysis(
+    batch: EventBatch,
+    changes: dict[str, bool],
+    all_events: list[CaptureEvent] | None = None,
+    threshold_seconds: float | None = None,
+) -> BatchAnalysis | None:
+    """If a whole batch is provably idle, build its ``break`` block WITHOUT a vision call.
+
+    A vision call only earns its cost when there's something on screen to read. When the
+    screen never visibly changed across the entire batch (every event after the first is
+    ``static`` — the first has no predecessor to diff against) and the span is at least
+    ``STALE_PAUSE_SECONDS``, the model would only ever label it as away-time anyway — the
+    same verdict :func:`enforce_static_breaks` reaches deterministically. So short-circuit:
+    one ``break`` block, zero tokens. This is what keeps a screen "left on" (a static page
+    the auto-pause hasn't caught yet, or a long idle stretch) from costing anything.
+
+    Returns ``None`` when the batch isn't provably idle — the caller then does the normal
+    vision path. Deliberately conservative: a *short* static batch (< threshold) still goes
+    to the model, because a few minutes on one page might be real reading worth labelling,
+    and it's cheap anyway.
+    """
+    thr = (threshold_seconds if threshold_seconds is not None
+           else float(config.STALE_PAUSE_SECONDS))
+    events = list(batch.events)
+    if thr <= 0 or len(events) < 2:
+        return None
+    # Any real change after the first event means there was something to see — not idle.
+    if any(changes.get(e.event_id, True) for e in events[1:]):
+        return None
+    dwell = compute_dwell(all_events if all_events is not None else events)
+    total = sum(dwell.get(e.event_id, 0) for e in events)
+    if total < thr:
+        return None
+    start_dt = events[0].dt
+    app = Counter(e.app_name for e in events).most_common(1)[0][0]
+    block = LabeledBlock(
+        start=start_dt.isoformat(timespec="seconds"),
+        end=(start_dt + timedelta(seconds=total)).isoformat(timespec="seconds"),
+        duration_seconds=total,
+        label=f"Away — {app} left open",
+        category="break",
+        app_name=app,
+        source_event_ids=[e.event_id for e in events],
+        detail="Screen didn't change the whole time — likely away from the computer.",
+    )
+    return BatchAnalysis(batch_id=batch.batch_id, date=batch.date, blocks=[block])
+
+
 # --- Public entry points --------------------------------------------------------------
 
 def analyze_batch(
@@ -580,9 +630,15 @@ def analyze_batch(
     use_cache: bool = True,
 ) -> BatchAnalysis:
     """Analyze one batch end-to-end: LLM grouping (cached) -> deterministic derivation,
-    then the deterministic away-time rule (see :func:`enforce_static_breaks`)."""
+    then the deterministic away-time rule (see :func:`enforce_static_breaks`).
+
+    Fast path first: a provably-idle batch (:func:`idle_batch_analysis`) skips the vision
+    call entirely — an all-static stretch costs zero tokens."""
     src = Path(pending_dir) if pending_dir is not None else config.pending_dir()
     changes = annotate_screen_changes(batch, src)
+    idle = idle_batch_analysis(batch, changes, all_events=all_events)
+    if idle is not None:
+        return idle
     grouping = llm_grouping(batch, pending_dir=pending_dir, use_cache=use_cache,
                             changes=changes)
     analysis = derive_blocks(batch, grouping, all_events=all_events)

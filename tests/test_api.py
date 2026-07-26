@@ -27,6 +27,26 @@ def test_index_serves_chat_page():
     assert "DayLook" in r.text
 
 
+def test_settings_roundtrip_persists_flags(tmp_path, monkeypatch):
+    # The ambient-capture toggles persist to settings.json and read back. Login-item side
+    # effects are a no-op here (not a frozen app), which must not fail the request.
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    client = TestClient(app)
+    assert client.get("/settings").json() == {
+        "auto_start_capture": False, "launch_at_login": False,
+    }
+    r = client.post("/settings", json={"auto_start_capture": True, "launch_at_login": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["auto_start_capture"] is True and body["launch_at_login"] is True
+    # Reloads from disk on a fresh read.
+    assert client.get("/settings").json()["auto_start_capture"] is True
+    # A partial patch leaves the untouched flag alone.
+    client.post("/settings", json={"auto_start_capture": False})
+    got = client.get("/settings").json()
+    assert got["auto_start_capture"] is False and got["launch_at_login"] is True
+
+
 def test_health(tmp_path, monkeypatch):
     monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
     client = TestClient(app)

@@ -211,6 +211,46 @@ def post_setup(req: SetupRequest) -> dict:
     return {"configured": settings.is_configured(data), "mode": data.get("api_key_mode")}
 
 
+class SettingsPatch(BaseModel):
+    """Ambient-capture preferences (Phase 1). Any omitted field is left unchanged."""
+    auto_start_capture: bool | None = None
+    launch_at_login: bool | None = None
+
+
+@app.get("/settings")
+def get_settings() -> dict:
+    """The ambient-capture toggles for the Settings UI / menubar."""
+    d = settings.load()
+    return {
+        "auto_start_capture": bool(d.get("auto_start_capture")),
+        "launch_at_login": bool(d.get("launch_at_login")),
+    }
+
+
+@app.post("/settings")
+def post_settings(req: SettingsPatch) -> dict:
+    """Persist the ambient toggles and apply side effects.
+
+    ``launch_at_login`` is pushed to the OS immediately (login-item register/unregister);
+    ``auto_start_capture`` is only read at the next launch, so it just persists here.
+    """
+    patch: dict = {}
+    if req.auto_start_capture is not None:
+        patch["auto_start_capture"] = bool(req.auto_start_capture)
+    if req.launch_at_login is not None:
+        patch["launch_at_login"] = bool(req.launch_at_login)
+    data = settings.save(patch)
+    login_applied = None
+    if req.launch_at_login is not None:
+        from daylook import loginitem
+        login_applied = loginitem.set_login_item(bool(req.launch_at_login))
+    return {
+        "auto_start_capture": bool(data.get("auto_start_capture")),
+        "launch_at_login": bool(data.get("launch_at_login")),
+        "login_item_applied": login_applied,
+    }
+
+
 @app.get("/journal/backlog")
 def journal_backlog() -> dict:
     """Pending capture events grouped by calendar date — the 'you have unprocessed days'
