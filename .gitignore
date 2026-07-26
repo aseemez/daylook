@@ -62,3 +62,6 @@ dist/
 
 # Relay integration-test scratch data
 .relay_test_home/
+
+# Local handoff/progress doc — kept on disk, never committed
+PROGRESS.md
