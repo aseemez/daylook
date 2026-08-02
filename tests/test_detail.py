@@ -78,6 +78,22 @@ def test_merge_keeps_both_details_in_order_and_caps_length():
     assert len(_merge_two(a, long)["detail"]) <= 600
 
 
+def test_merge_label_and_detail_come_from_the_same_block():
+    # The label is taken from the LONGER block; the detail must lead with THAT block's detail
+    # too, so a merge of two different-topic same-app blocks never shows one topic's label over
+    # the other topic's description (the "one topic, different description" mismatch). Here the
+    # longer block is the SECOND one, so chronological-first would have mismatched.
+    short_first = {"start": "s", "end": "m", "duration_seconds": 60, "label": "Wire bending",
+                   "category": "research", "detail": "About wire bending curves.",
+                   "app_name": "Safari", "source_event_ids": ["e1"]}
+    long_second = {"start": "m", "end": "e", "duration_seconds": 900, "label": "FP8 quantization",
+                   "category": "research", "detail": "About FP8 to INT8 quantization.",
+                   "app_name": "Safari", "source_event_ids": ["e2"]}
+    merged = _merge_two(short_first, long_second)
+    assert merged["label"] == "FP8 quantization"
+    assert merged["detail"].startswith("About FP8 to INT8 quantization.")
+
+
 def test_summarize_day_tolerates_blocks_without_detail():
     legacy = {"start": "2026-07-05T09:00:00", "end": "2026-07-05T09:30:00",
               "duration_seconds": 1800, "label": "Work", "category": "coding",

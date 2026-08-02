@@ -654,11 +654,16 @@ def _merge_two(a: dict, b: dict) -> dict:
     Times and source ids are recomputed from the real data, so the anti-hallucination invariant
     (source_event_ids ⊆ captured events) survives the merge."""
     lead = a if a["duration_seconds"] >= b["duration_seconds"] else b
+    other = b if lead is a else a
     # Details are the journal's substance — merging must not throw the absorbed block's away.
-    # Concatenate in chronological order, dedupe, and cap so a many-way merge stays a note,
-    # not an essay.
+    # But the label comes from `lead`, so `lead`'s own detail must lead the merged detail:
+    # otherwise fusing two different-topic same-app blocks (e.g. two Safari research sessions)
+    # shows one topic's label over the OTHER topic's description — the "one topic, different
+    # description" mismatch. Lead-first, deduped, and capped at 2 sentences means the label's
+    # topic always heads the detail (and a fully-described lead simply drops the absorbed note),
+    # while a genuine same-topic de-frag still keeps both complementary sentences.
     details = [d for d in dict.fromkeys(
-        [(a.get("detail") or "").strip(), (b.get("detail") or "").strip()]) if d]
+        [(lead.get("detail") or "").strip(), (other.get("detail") or "").strip()]) if d]
     return {
         "start": a["start"],
         "end": b["end"],
