@@ -59,10 +59,10 @@ def test_missing_images_never_fabricate_idleness(tmp_path):
     assert all(changed.values())
 
 
-def test_long_static_run_is_carved_out_as_break_in_code():
+def test_long_static_run_is_dropped_as_a_gap_in_code():
     # 3 min of real watching, then 30 static minutes (paused video), then 4 active min.
-    # However the model groups it, the 30 static minutes must come out as a 'break' block —
-    # the rule is deterministic, not a prompt suggestion.
+    # However the model groups it, the 30 static minutes must be DROPPED — away time is a
+    # clean gap, not a journaled block. The rule is deterministic, not a prompt suggestion.
     from daylook.agents.analyst import (
         _Group, _Grouping, derive_blocks, enforce_static_breaks,
     )
@@ -79,19 +79,20 @@ def test_long_static_run_is_carved_out_as_break_in_code():
     analysis = derive_blocks(batch, grouping)
     fixed = enforce_static_breaks(analysis, list(events), changes)
 
-    cats = [(b.category, b.label) for b in fixed.blocks]
-    assert [c for c, _ in cats] == ["entertainment", "break", "entertainment"]
-    away = fixed.blocks[1]
-    assert away.label.startswith("Away")
-    assert away.duration_seconds >= 25 * 60
-    # Anti-hallucination invariant survives: every event still in exactly one block.
-    covered = [eid for b in fixed.blocks for eid in b.source_event_ids]
-    assert sorted(covered) == sorted(e.event_id for e in events)
+    # Only the two active runs survive; the static middle is gone (a gap between them).
+    assert [b.category for b in fixed.blocks] == ["entertainment", "entertainment"]
+    assert not any(b.label.startswith("Away") for b in fixed.blocks)
+    # Anti-hallucination invariant survives: surviving blocks reference only real events, and
+    # the dropped away events (the static middle) intentionally belong to no block.
+    covered = sorted(eid for b in fixed.blocks for eid in b.source_event_ids)
+    active_ids = sorted(e.event_id for e in [*events[:3], *events[33:]])
+    assert covered == active_ids
 
 
 def test_idle_batch_skips_the_vision_call_entirely(monkeypatch, tmp_path):
-    # A whole batch that never visibly changed must produce a break block with ZERO model
-    # calls — the token-frugality win. We assert llm_grouping is never invoked.
+    # A whole batch that never visibly changed must produce NO blocks (away time is a clean
+    # gap) with ZERO model calls — the token-frugality win. We assert llm_grouping is never
+    # invoked, and that the batch contributes nothing to the timeline.
     from daylook.agents import analyst
     from daylook.agents.analyst import analyze_batch
 
@@ -105,10 +106,7 @@ def test_idle_batch_skips_the_vision_call_entirely(monkeypatch, tmp_path):
     monkeypatch.setattr(analyst, "llm_grouping", boom)
 
     result = analyze_batch(batch, pending_dir=tmp_path, all_events=events)
-    assert len(result.blocks) == 1
-    assert result.blocks[0].category == "break"
-    assert result.blocks[0].label.startswith("Away")
-    assert result.blocks[0].duration_seconds >= 10 * 60
+    assert result.blocks == []
 
 
 def test_short_static_pause_is_left_to_the_model():

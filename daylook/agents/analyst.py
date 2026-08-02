@@ -485,15 +485,16 @@ def enforce_static_breaks(
     all_events: list[CaptureEvent] | None = None,
     threshold_seconds: float | None = None,
 ) -> BatchAnalysis:
-    """Carve provably-idle stretches out of active blocks — in code, not by prompt.
+    """Drop provably-idle stretches out of active blocks — in code, not by prompt.
 
     The screen-change annotations are *evidence*; this is the *rule*: a run of consecutive
     events whose frames never visibly changed, lasting at least ``STALE_PAUSE_SECONDS``
     (the same 10-minute bar the live capture loop uses before auto-pausing), cannot be
     active work — nobody watches a video or reads a page for 10+ minutes without a single
-    pixel moving. Such runs become ``break`` blocks ("Away — <app> left open") regardless
-    of how the model grouped or labeled them, so a paused video can never again be credited
-    as a 92-minute session. Shorter static stretches are left to the model's judgment (a
+    pixel moving. Such runs are **removed entirely** regardless of how the model grouped or
+    labeled them: away time is a clean gap on the timeline, not a journaled block, so a
+    paused video or an abandoned screen leaves empty space rather than being credited (or
+    even shown) as a session. Shorter static stretches are left to the model's judgment (a
     slow reader on one page is legitimate; that ambiguity is why the bar matches capture's).
     """
     thr = (threshold_seconds if threshold_seconds is not None
@@ -542,32 +543,25 @@ def enforce_static_breaks(
             out.append(blk)
             continue
         for away, seg in merged:
+            # Away time is a clean gap on the timeline, not a journaled block: the user was
+            # not there, so we drop the segment entirely (it leaves empty space between the
+            # surrounding active blocks) rather than emitting an "Away — X left open" block.
+            if away:
+                continue
             start_dt = seg[0].dt
             total = sum(dwell.get(e.event_id, 0) for e in seg)
             end_dt = start_dt + timedelta(seconds=total)
             app = Counter(e.app_name for e in seg).most_common(1)[0][0]
-            if away:
-                out.append(LabeledBlock(
-                    start=start_dt.isoformat(timespec="seconds"),
-                    end=end_dt.isoformat(timespec="seconds"),
-                    duration_seconds=total,
-                    label=f"Away — {app} left open",
-                    category="break",
-                    app_name=app,
-                    source_event_ids=[e.event_id for e in seg],
-                    detail="Screen didn't change the whole time — likely away from the computer.",
-                ))
-            else:
-                out.append(LabeledBlock(
-                    start=start_dt.isoformat(timespec="seconds"),
-                    end=end_dt.isoformat(timespec="seconds"),
-                    duration_seconds=total,
-                    label=blk.label,
-                    category=blk.category,
-                    app_name=app,
-                    source_event_ids=[e.event_id for e in seg],
-                    detail=blk.detail,
-                ))
+            out.append(LabeledBlock(
+                start=start_dt.isoformat(timespec="seconds"),
+                end=end_dt.isoformat(timespec="seconds"),
+                duration_seconds=total,
+                label=blk.label,
+                category=blk.category,
+                app_name=app,
+                source_event_ids=[e.event_id for e in seg],
+                detail=blk.detail,
+            ))
     return BatchAnalysis(batch_id=analysis.batch_id, date=analysis.date, blocks=out)
 
 
@@ -579,17 +573,18 @@ def idle_batch_analysis(
     all_events: list[CaptureEvent] | None = None,
     threshold_seconds: float | None = None,
 ) -> BatchAnalysis | None:
-    """If a whole batch is provably idle, build its ``break`` block WITHOUT a vision call.
+    """If a whole batch is provably idle, return an EMPTY analysis WITHOUT a vision call.
 
     A vision call only earns its cost when there's something on screen to read. When the
     screen never visibly changed across the entire batch (every event after the first is
     ``static`` — the first has no predecessor to diff against) and the span is at least
-    ``STALE_PAUSE_SECONDS``, the model would only ever label it as away-time anyway — the
-    same verdict :func:`enforce_static_breaks` reaches deterministically. So short-circuit:
-    one ``break`` block, zero tokens. This is what keeps a screen "left on" (a static page
-    the auto-pause hasn't caught yet, or a long idle stretch) from costing anything.
+    ``STALE_PAUSE_SECONDS``, the user was away — the same verdict :func:`enforce_static_breaks`
+    reaches deterministically. So short-circuit: zero blocks, zero tokens. Away time is a
+    clean gap on the timeline, so a screen "left on" (a static page the auto-pause hasn't
+    caught yet, or a long idle stretch) neither costs anything nor shows up as a block.
 
-    Returns ``None`` when the batch isn't provably idle — the caller then does the normal
+    Returns a blocks-``[]`` analysis for a provably-idle batch (still short-circuits the
+    model), and ``None`` when the batch isn't provably idle — the caller then does the normal
     vision path. Deliberately conservative: a *short* static batch (< threshold) still goes
     to the model, because a few minutes on one page might be real reading worth labelling,
     and it's cheap anyway.
@@ -606,19 +601,11 @@ def idle_batch_analysis(
     total = sum(dwell.get(e.event_id, 0) for e in events)
     if total < thr:
         return None
-    start_dt = events[0].dt
-    app = Counter(e.app_name for e in events).most_common(1)[0][0]
-    block = LabeledBlock(
-        start=start_dt.isoformat(timespec="seconds"),
-        end=(start_dt + timedelta(seconds=total)).isoformat(timespec="seconds"),
-        duration_seconds=total,
-        label=f"Away — {app} left open",
-        category="break",
-        app_name=app,
-        source_event_ids=[e.event_id for e in events],
-        detail="Screen didn't change the whole time — likely away from the computer.",
-    )
-    return BatchAnalysis(batch_id=batch.batch_id, date=batch.date, blocks=[block])
+    # Provably idle: the user was away for the whole batch. Away time is a clean gap, not a
+    # journaled block — so this batch contributes NO blocks, and still costs zero tokens
+    # because we never call the model. The events are still marked processed by the pipeline
+    # (they don't linger in pending); they simply don't appear on the timeline.
+    return BatchAnalysis(batch_id=batch.batch_id, date=batch.date, blocks=[])
 
 
 # --- Public entry points --------------------------------------------------------------
