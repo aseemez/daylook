@@ -993,6 +993,26 @@
     const ap = h < 12 ? "AM" : "PM"; h = h % 12 || 12;
     return `${h} ${ap}`;
   };
+  // Map a clock time (minutes since midnight) to its Y in the *laid-out* timeline. The hour
+  // rail must use this — not the naive (m - gridStart) * PPM — because short blocks get a
+  // minimum height and push later blocks down (gridLayout's `cursor`), so a block drifts below
+  // its true-scale position. If the rail stayed on the true linear axis, its "5 PM" mark would
+  // sit next to a 3:52 block. Interpolating through the rows' real tops/bottoms keeps each hour
+  // label beside the block that actually occupies that hour. Outside the rows we extrapolate at
+  // the true scale (PPM), so empty top/bottom margins still read as real time.
+  function timeToY(m, rows) {
+    if (!rows.length) return 0;
+    const anchors = [];
+    for (const r of rows) { anchors.push([r.startMin, r.top]); anchors.push([r.endMin, r.top + r.h]); }
+    if (m <= anchors[0][0]) return anchors[0][1] - (anchors[0][0] - m) * PPM;
+    const last = anchors[anchors.length - 1];
+    if (m >= last[0]) return last[1] + (m - last[0]) * PPM;
+    for (let i = 1; i < anchors.length; i++) {
+      const [t0, y0] = anchors[i - 1], [t1, y1] = anchors[i];
+      if (m <= t1) return t1 === t0 ? y1 : y0 + ((m - t0) / (t1 - t0)) * (y1 - y0);
+    }
+    return last[1];
+  }
 
   function laneChipsHtml(b) {
     const cur = laneOf(b.category);
@@ -1033,9 +1053,12 @@
 
   function gridHtml(blocks) {
     const { gridStart, gridEnd, rows, height } = gridLayout(blocks);
+    // The last hour line can extrapolate a little past the final block (timeToY), so make sure
+    // the container is tall enough to hold it — otherwise the closing hour label gets clipped.
+    const gridH = Math.max(height, (rows.length ? timeToY(gridEnd, rows) : 0) + 20);
     let hours = "";
     for (let m = gridStart; m <= gridEnd; m += 60) {
-      hours += `<div class="grid-hour" style="top:${(m - gridStart) * PPM}px">
+      hours += `<div class="grid-hour" style="top:${timeToY(m, rows)}px">
           <span class="hlbl">${hourLabel(m)}</span><span class="hline"></span></div>`;
     }
     // An "untracked" slot wherever there's a real (>5 min) hole between events — click to fill.
@@ -1050,7 +1073,7 @@
             ＋ ${fmtDur(gapMin * 60)} untracked</button>`;
       }
     });
-    return `<div class="grid" style="height:${height}px">
+    return `<div class="grid" style="height:${gridH}px">
         ${hours}
         <div class="grid-events">${rows.map(gevHtml).join("")}${gaps}</div>
       </div>`;
