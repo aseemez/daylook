@@ -967,6 +967,9 @@
   const PPM = 1.8;        // pixels per minute (1h = 108px) — a 25-min block fits its detail line
   const MIN_EV_H = 30;    // enough for the title line even on a 2-minute block
   const DETAIL_MIN_H = 46;// only show the detail text when the box can fit a second line
+  const GAP_MIN = 5;      // a hole this long (minutes) is real untracked time, not rounding
+  const GAP_H = 30;       // ...and always renders as a strip this tall, whatever its duration
+  const HOUR_MIN_GAP = 16;// hour labels closer together than this would overlap — drop them
 
   const isoMinutes = (iso) => {
     const t = hm24(iso); if (!t) return 0;
@@ -982,6 +985,14 @@
     const rows = blocks.map((b, i) => {
       let top = (startMins[i] - gridStart) * PPM;
       top = Math.max(top, cursor + 3);
+      // Reserve a fixed strip for untracked time. A day of short blocks inflates `cursor` well
+      // past true scale (every 2-min block still claims MIN_EV_H), so by evening the layout can
+      // be running *ahead* of the clock — and a real hole then collapses to nothing: a 4h20m
+      // evening gap rendered 20px, and 12-min/39-min gaps computed NEGATIVE height and
+      // disappeared, taking their "click to fill" affordance with them. One height for every
+      // gap (5 minutes or 5 hours) also keeps the rail calm — the strip states its own range,
+      // so it doesn't need to be to scale to be honest.
+      if (i > 0 && startMins[i] - endMins[i - 1] >= GAP_MIN) top = Math.max(top, cursor + GAP_H);
       const h = Math.max((endMins[i] - startMins[i]) * PPM, MIN_EV_H);
       cursor = top + h;
       return { b, top, h, startMin: startMins[i], endMin: endMins[i] };
@@ -1056,9 +1067,16 @@
     // The last hour line can extrapolate a little past the final block (timeToY), so make sure
     // the container is tall enough to hold it — otherwise the closing hour label gets clipped.
     const gridH = Math.max(height, (rows.length ? timeToY(gridEnd, rows) : 0) + 20);
-    let hours = "";
+    // Hours the layout has compressed into a few pixels (an untracked strip holds four of them
+    // in 30px) would print their labels on top of each other — "6 PM 7 PM 8 PM 9 PM" as one
+    // unreadable smear. Draw an hour only when it clears the last one drawn; the gap strip
+    // below already names the span it covers.
+    let hours = "", lastY = -1e9;
     for (let m = gridStart; m <= gridEnd; m += 60) {
-      hours += `<div class="grid-hour" style="top:${timeToY(m, rows)}px">
+      const y = timeToY(m, rows);
+      if (y - lastY < HOUR_MIN_GAP) continue;
+      lastY = y;
+      hours += `<div class="grid-hour" style="top:${y}px">
           <span class="hlbl">${hourLabel(m)}</span><span class="hline"></span></div>`;
     }
     // An "untracked" slot wherever there's a real (>5 min) hole between events — click to fill.
@@ -1067,10 +1085,13 @@
       const nxt = rows[i + 1]; if (!nxt) return;
       const gapMin = nxt.startMin - r.endMin;
       const top = r.top + r.h + 2, hgt = nxt.top - top - 2;
-      if (gapMin >= 5 && hgt >= 14) {
+      if (gapMin >= GAP_MIN && hgt >= 14) {
+        // Name the span, not just the length: the strip is a fixed height and the rail skips
+        // the hours it swallowed, so "4h 20m untracked" alone leaves the reader guessing WHICH
+        // four hours. "5:36 PM–9:56 PM · 4h 20m untracked" answers it without expanding.
         gaps += `<button class="ggap" type="button" style="top:${top}px;height:${hgt}px"
             data-act="addgap" data-start="${hm24(r.b.end)}" data-end="${hm24(nxt.b.start)}">
-            ＋ ${fmtDur(gapMin * 60)} untracked</button>`;
+            ＋ ${fmt12(r.b.end)}–${fmt12(nxt.b.start)} · ${fmtDur(gapMin * 60)} untracked</button>`;
       }
     });
     return `<div class="grid" style="height:${gridH}px">
