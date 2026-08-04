@@ -132,3 +132,57 @@ def test_invalid_category_falls_back_to_other():
     ])
     analysis = derive_blocks(batch, grouping)
     assert analysis.blocks[0].category == "other"
+
+
+def _blk(start: str, end: str, seconds: int, app: str = "Terminal",
+         category: str = "planning", label: str = "Working") -> dict:
+    """A block dict in the shape merge_blocks consumes (times are HH:MM:SS on 2026-08-02)."""
+    return {
+        "start": f"2026-08-02T{start}", "end": f"2026-08-02T{end}",
+        "duration_seconds": seconds, "label": label, "category": category,
+        "detail": "", "app_name": app, "source_event_ids": [f"evt_{start}"],
+    }
+
+
+def test_blocks_are_not_merged_across_a_capture_pause():
+    """Regression (2026-08-02): two same-app/category blocks either side of a 4h38m capture
+    pause merged into one, and since a merge keeps the first start and the last end, the
+    timeline drew 16 minutes of Terminal work as a block spanning 17:03-21:41 — hours the
+    screen was locked. Away time must stay an empty gap."""
+    from daylook.agents.analyst import merge_blocks
+    merged = merge_blocks([
+        _blk("17:03:29", "17:19:29", 960),
+        _blk("21:40:07", "21:41:07", 60),
+        _blk("21:41:07", "22:09:07", 1680, app="Safari", category="social"),
+    ], min_seconds=0)
+    spans = [(b["start"][11:16], b["end"][11:16]) for b in merged]
+    assert ("17:03", "21:41") not in spans          # the stretched block is gone
+    assert ("17:03", "17:19") in spans              # ...and ends where the events did
+    assert all(
+        (datetime.fromisoformat(b["end"]) - datetime.fromisoformat(b["start"])).total_seconds()
+        <= b["duration_seconds"] + 300 for b in merged
+    ), "no block may cover materially more wall clock than it has captured time"
+
+
+def test_adjacent_blocks_still_merge():
+    """The guard must not shatter a normal day: same app+category, no gap -> still one block."""
+    from daylook.agents.analyst import merge_blocks
+    merged = merge_blocks([
+        _blk("10:00:00", "10:20:00", 1200),
+        _blk("10:20:00", "10:35:00", 900),
+    ], min_seconds=0)
+    assert len(merged) == 1
+    assert merged[0]["start"][11:16] == "10:00" and merged[0]["end"][11:16] == "10:35"
+
+
+def test_short_block_is_not_folded_across_a_pause():
+    """Pass 2 folds sub-cutoff blocks into a neighbour — but a neighbour on the far side of a
+    pause would inherit the stretch, so a short block stranded between pauses stays put."""
+    from daylook.agents.analyst import merge_blocks
+    merged = merge_blocks([
+        _blk("09:00:00", "09:30:00", 1800, app="Safari", category="research"),
+        _blk("14:00:00", "14:00:40", 40),
+        _blk("18:00:00", "18:30:00", 1800, app="Cursor", category="coding"),
+    ], min_seconds=120)
+    assert len(merged) == 3
+    assert ("14:00", "14:00") == (merged[1]["start"][11:16], merged[1]["end"][11:16])

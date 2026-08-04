@@ -104,6 +104,14 @@ MAX_IMAGES_PER_BATCH = 12         # screenshots actually sent per vision call (k
 # long idle gap or the final event of the day can't inflate a block's duration.
 MAX_EVENT_DWELL_SECONDS = 15 * 60
 
+# Two blocks separated by more than this much dead wall-clock are never merged, however alike
+# they look. Merging takes the first block's start and the last one's end, so fusing across a
+# capture pause (screen locked, display asleep, auto-paused) draws ONE block over hours nobody
+# was there — exactly the "it tracks while I do nothing" bug (2026-08-02: a 16-minute Terminal
+# block rendered 17:03–21:41). Capture emits every ~12s while it's awake, so any gap this long
+# means capture was paused; the timeline must show it as empty, not as work.
+MAX_BLOCK_GAP_SECONDS = 5 * 60
+
 # Auto-pause: if the screen content hasn't changed for this long (no window switch, no visible
 # frame change), the user has almost certainly walked away with the screen on — stop emitting
 # heartbeats so an unattended screen can't be credited as presence. Capture resumes by itself

@@ -676,6 +676,28 @@ def _merge_two(a: dict, b: dict) -> dict:
     }
 
 
+def _adjacent(a: dict, b: dict, max_gap: int | None = None) -> bool:
+    """True when ``b`` starts soon enough after ``a`` ends that they're one stretch of time.
+
+    The gate on every merge. A merge keeps ``a``'s start and ``b``'s end, so merging two blocks
+    that sit on either side of a capture pause paints a single block across hours the user was
+    away (screen locked / display asleep / auto-paused — capture correctly wrote nothing, and
+    the merge invented it back). Capture emits every ~12s while awake, so a gap beyond
+    ``MAX_BLOCK_GAP_SECONDS`` is dead time by definition: leave it empty.
+
+    Unparseable timestamps fall back to True — merging is the long-standing behaviour, so a bad
+    timestamp degrades to the old output rather than silently shattering a day into fragments.
+    """
+    cap = config.MAX_BLOCK_GAP_SECONDS if max_gap is None else max_gap
+    if cap <= 0:
+        return True
+    try:
+        return (datetime.fromisoformat(b["start"])
+                - datetime.fromisoformat(a["end"])).total_seconds() <= cap
+    except (ValueError, TypeError, KeyError):
+        return True
+
+
 def merge_blocks(blocks: list[dict], min_seconds: int | None = None) -> list[dict]:
     """Collapse a fragmented block list into a few meaningful ones — the difference between a
     minute-by-minute log and a journal. Two passes, repeated until stable:
@@ -694,7 +716,8 @@ def merge_blocks(blocks: list[dict], min_seconds: int | None = None) -> list[dic
         out: list[dict] = []
         changed = False
         for b in bs:
-            if out and out[-1]["app_name"] == b["app_name"] and out[-1]["category"] == b["category"]:
+            if (out and out[-1]["app_name"] == b["app_name"]
+                    and out[-1]["category"] == b["category"] and _adjacent(out[-1], b)):
                 out[-1] = _merge_two(out[-1], b)
                 changed = True
             else:
@@ -714,6 +737,13 @@ def merge_blocks(blocks: list[dict], min_seconds: int | None = None) -> list[dic
             if b["duration_seconds"] >= cutoff:
                 continue
             prev, nxt = (blocks[i - 1] if i > 0 else None), (blocks[i + 1] if i + 1 < len(blocks) else None)
+            # A neighbour across a capture pause is not a neighbour (see _adjacent): folding
+            # into it would stretch the survivor over the away time. A short block stranded
+            # between two pauses stays as-is — it's a real, brief, isolated stretch of work.
+            if prev is not None and not _adjacent(prev, b):
+                prev = None
+            if nxt is not None and not _adjacent(b, nxt):
+                nxt = None
             if prev is None and nxt is None:
                 continue  # a lone short day: leave it, it's all we have
             # Fold into the longer neighbour so the dominant activity keeps its identity.
