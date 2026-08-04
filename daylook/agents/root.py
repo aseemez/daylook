@@ -82,13 +82,18 @@ class RootAgent:
             """Run the full pipeline over pending capture events and write today's journal.
             Honors any preferences the user has set this session. Returns the writeup."""
             refinements = list(tool_context.state.get("refinements", []))
+            # wait=False: never queue a chat turn behind an in-flight run (the hourly
+            # auto-journal is minutes of vision calls). Busy comes back instantly and we answer
+            # from the stored journal — the run in progress is writing the fresh one anyway.
             result = await asyncio.to_thread(
-                pipeline.process_day, pending_dir=pending_dir, refinements=refinements
+                pipeline.process_day, pending_dir=pending_dir, refinements=refinements,
+                wait=False,
             )
             if result["date"] is None:
                 # Nothing pending — but that usually means the day is already processed,
                 # not that nothing happened. Serve the STORED journal for today so 'how was
                 # my day' right after processing doesn't dead-end in 'no pending activity'.
+                busy = bool(result.get("busy"))
                 today = date_cls.today().isoformat()
                 stored = memory.get_journal(today)
                 if stored:
@@ -98,7 +103,18 @@ class RootAgent:
                         "num_blocks": len(memory.get_blocks(today)),
                         "writeup": stored["writeup"],
                         "also_processed_dates": [],
-                        "note": "No new activity since last processing; this journal is current.",
+                        "note": ("An update of the last stretch is running right now; this is "
+                                 "the journal as of the previous update. Answer from it and "
+                                 "mention the last few minutes may not be included yet.")
+                        if busy else
+                        "No new activity since last processing; this journal is current.",
+                    }
+                if busy:
+                    return {
+                        "date": today,
+                        "writeup": None,
+                        "note": ("The first journal for today is still being built (this takes "
+                                 "a couple of minutes). Tell the user to ask again shortly."),
                     }
             tool_context.state["current_date"] = result["date"]
             tool_context.state["current_day"] = result["day"]

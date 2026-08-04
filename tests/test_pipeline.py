@@ -153,3 +153,34 @@ def test_manual_blocks_survive_reprocessing(tmp_path, monkeypatch):
     manual = [b for b in mem.get_blocks("2026-07-05") if b["manual"]]
     assert len(manual) == 1 and manual[0]["label"] == "Offline standup"
     mem.close()
+
+
+def test_busy_pipeline_returns_immediately_instead_of_queueing(tmp_path, monkeypatch):
+    """Regression (2026-08-02): a chat turn queued behind the hourly auto-journal sat on
+    'Reading your day...' for 3.5 minutes (logged chat latency 208s, ~200s of it pure lock
+    wait, because a full run is minutes of vision calls). wait=False must return busy at once
+    so the caller can answer from the stored journal."""
+    import threading
+    from daylook import pipeline as pipeline_mod
+
+    monkeypatch.setenv("DAYLOOK_HOME", str(tmp_path))
+    mem = MemoryAgent(db_path=tmp_path / "journal.sqlite")
+    pipe = Pipeline(mem, analyze_fn=_fake_analyze, journal_fn=lambda *a, **k: "x")
+
+    released = threading.Event()
+    holder = threading.Thread(
+        target=lambda: (pipeline_mod._PROCESS_LOCK.acquire(), released.wait()),
+    )
+    holder.start()
+    try:
+        while not pipeline_mod._PROCESS_LOCK.locked():
+            pass
+        result = pipe.process_day(wait=False)
+    finally:
+        released.set()
+        holder.join()
+        pipeline_mod._PROCESS_LOCK.release()
+
+    assert result["busy"] is True
+    assert result["date"] is None          # caller falls back to the stored journal
+    assert result["days"] == []

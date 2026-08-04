@@ -49,6 +49,7 @@ class Pipeline:
         refinements: list[str] | None = None,
         use_cache: bool = True,
         move_processed: bool = True,
+        wait: bool = True,
     ) -> dict:
         """Ingest pending events, analyze, write the journal(s), persist. Returns a result dict.
 
@@ -64,12 +65,31 @@ class Pipeline:
         ``refinements`` (session-scoped user preferences) are threaded into the Journalist.
         ``move_processed`` moves ingested events to ``processed/`` after a successful persist;
         set False to keep a fixture reusable across runs (e.g. in eval).
+
+        ``wait=False`` returns ``{"busy": True, ...}`` immediately instead of queueing behind a
+        run already in progress. A full run is minutes of vision calls (observed: 190–230s), so
+        a chat turn that blocks on the lock while the hourly auto-journal is mid-flight just sits
+        there saying "Reading your day..." for 3+ minutes — 2026-08-02 logged a chat latency of
+        208s of which ~200s was pure waiting. The caller should answer from the stored journal
+        instead: the run holding the lock is writing the fresh one anyway.
         """
-        with _PROCESS_LOCK:
+        if not _PROCESS_LOCK.acquire(blocking=wait):
+            return {
+                "busy": True,
+                "date": None,
+                "writeup": "",
+                "day": {"date": None, "blocks": []},
+                "num_blocks": 0,
+                "num_events": 0,
+                "days": [],
+            }
+        try:
             return self._process_day_locked(
                 pending_dir=pending_dir, refinements=refinements,
                 use_cache=use_cache, move_processed=move_processed,
             )
+        finally:
+            _PROCESS_LOCK.release()
 
     def _process_day_locked(
         self,
